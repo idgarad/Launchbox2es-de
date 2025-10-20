@@ -1251,8 +1251,8 @@ class ArchiveExporter:
                         unmapped_dirs.add(archive_path)
                     continue
                 
-                # Find matching files for this game
-                matching_files = self._find_metadata_files(metadata_base, game_name)
+                # Find matching files for this game (with video filtering for Videos type)
+                matching_files = self._find_metadata_files(metadata_base, game_name, metadata_type)
                 
                 if not matching_files:
                     continue
@@ -1313,13 +1313,33 @@ class ArchiveExporter:
         
         return stats
     
-    def _find_metadata_files(self, base_path: Path, game_name: str) -> List[Path]:
+    def _is_video_file(self, file_path: Path) -> bool:
+        """
+        Check if a file is a video format
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            True if file is a video format, False otherwise
+        """
+        # Common video file extensions
+        video_extensions = {
+            '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm',
+            '.m4v', '.mpg', '.mpeg', '.3gp', '.ogv', '.m2ts', '.mts',
+            '.vob', '.divx', '.xvid', '.f4v', '.rm', '.rmvb', '.asf'
+        }
+        
+        return file_path.suffix.lower() in video_extensions
+    
+    def _find_metadata_files(self, base_path: Path, game_name: str, metadata_type: str = None) -> List[Path]:
         """
         Find metadata files matching the game name
         
         Args:
             base_path: Base directory to search
             game_name: Game name to match
+            metadata_type: Type of metadata (e.g., "Videos") for format filtering
             
         Returns:
             List of matching file paths
@@ -1334,7 +1354,16 @@ class ArchiveExporter:
             if file_path.is_file():
                 # Check if filename starts with game name
                 if file_path.stem.startswith(game_name):
-                    matching_files.append(file_path)
+                    # For Videos metadata, only include actual video files
+                    if metadata_type == "Videos":
+                        if self._is_video_file(file_path):
+                            matching_files.append(file_path)
+                        else:
+                            self.logger.debug(
+                                f"Skipping non-video file in Videos directory: {file_path.name}"
+                            )
+                    else:
+                        matching_files.append(file_path)
         
         return matching_files
     
