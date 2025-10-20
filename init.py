@@ -246,21 +246,32 @@ class ArchiveExporter:
         extensions = input("Extensions [.zip,.7z]: ").strip() or ".zip,.7z"
         
         # Suggest a common emulator
-        print("\nEmulator command (e.g., retroarch, mame, pcsx2)")
-        emulator = input("Emulator command [retroarch]: ").strip() or "retroarch"
+        print("\nEmulator setup:")
+        print("  Use ES-DE placeholders: %EMULATOR_RETROARCH%, %CORE_RETROARCH%, %ROM%")
+        print("  Examples:")
+        print("    RetroArch: %EMULATOR_RETROARCH% -L %CORE_RETROARCH%/[core]_libretro.so %ROM%")
+        print("    Standalone: /path/to/emulator %ROM%")
         
-        # Optional core for RetroArch
-        core = ""
-        if emulator == "retroarch":
-            core = input("RetroArch core (optional): ").strip()
+        emulator_type = input("\nEmulator type (retroarch/standalone) [retroarch]: ").strip().lower() or "retroarch"
+        
+        if emulator_type == "retroarch":
+            core = input("RetroArch core name (e.g., mame, nestopia, snes9x): ").strip()
+            if core:
+                command = f"%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/{core}_libretro.so %ROM%"
+            else:
+                # Default generic RetroArch command
+                command = "%EMULATOR_RETROARCH% %ROM%"
+        else:
+            command = input("Full emulator command (use %ROM% for game path): ").strip()
+            if not command:
+                command = "%EMULATOR_RETROARCH% %ROM%"  # Fallback
         
         return {
             'name': system_name,
             'fullname': full_name,
             'path': f"./roms/{system_name}",
             'extensions': extensions,
-            'command': emulator,
-            'core': core,
+            'command': command,
             'archive_name': archive_platform_name
         }
     
@@ -319,10 +330,7 @@ class ArchiveExporter:
             extensions_elem.text = custom_system['extensions']
             
             command_elem = ET.SubElement(system, 'command')
-            if custom_system['core']:
-                command_elem.text = f"{custom_system['command']} -L {custom_system['core']} %ROM%"
-            else:
-                command_elem.text = f"{custom_system['command']} %ROM%"
+            command_elem.text = custom_system['command']
             
             platform_elem = ET.SubElement(system, 'platform')
             platform_elem.text = custom_system['name']
@@ -884,6 +892,15 @@ class ArchiveExporter:
         try:
             operation = "symlink" if self.use_symlinks else "copy"
             
+            # Validate source exists
+            if not source.exists():
+                self.logger.error(f"Source file does not exist: {source}")
+                return False
+            
+            if not source.is_file():
+                self.logger.error(f"Source is not a file: {source}")
+                return False
+            
             # Dry run mode - simulate without creating
             if self.dry_run:
                 self.logger.debug(f"[DRY RUN] Would {operation}: {destination.name} -> {source}")
@@ -897,33 +914,91 @@ class ArchiveExporter:
                 return True
             
             # Create parent directories if needed
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                self.logger.error(f"Failed to create parent directory {destination.parent}: {e}")
+                return False
             
             # Check if destination already exists
             if destination.exists() or destination.is_symlink():
                 if force:
-                    destination.unlink()
-                    self.logger.debug(f"Removed existing file: {destination}")
+                    try:
+                        destination.unlink()
+                        self.logger.debug(f"Removed existing file: {destination}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to remove existing file {destination}: {e}")
+                        return False
                 else:
                     self.logger.warning(f"Destination already exists (skipping): {destination.name}")
                     return False
             
             # Create symlink or copy file
             if self.use_symlinks:
-                os.symlink(source, destination)
-                self.logger.debug(f"Created symlink: {destination.name} -> {source}")
+                try:
+                    os.symlink(source, destination)
+                    self.logger.debug(f"Created symlink: {destination.name} -> {source}")
+                    
+                    # Verify symlink was created successfully
+                    if not destination.is_symlink():
+                        self.logger.error(f"Symlink creation reported success but link does not exist: {destination}")
+                        return False
+                    
+                    # Verify symlink points to the correct source
+                    if destination.resolve() != source.resolve():
+                        self.logger.error(
+                            f"Symlink created but points to wrong target: "
+                            f"{destination.resolve()} != {source.resolve()}"
+                        )
+                        return False
+                        
+                except OSError as e:
+                    # Check if it's a privilege error on Windows
+                    if e.winerror == 1314:  # ERROR_PRIVILEGE_NOT_HELD
+                        self.logger.error(
+                            f"Symlink creation failed: Insufficient privileges\n"
+                            f"  On Windows, you need either:\n"
+                            f"  1. Run as Administrator, OR\n"
+                            f"  2. Enable Developer Mode (Settings > Update & Security > For Developers)\n"
+                            f"  Alternatively, use --symlink=false to copy files instead"
+                        )
+                    else:
+                        self.logger.error(f"Failed to create symlink {destination}: {e}")
+                    return False
             else:
-                import shutil
-                shutil.copy2(source, destination)
-                self.logger.debug(f"Copied file: {destination.name} <- {source}")
+                try:
+                    import shutil
+                    shutil.copy2(source, destination)
+                    self.logger.debug(f"Copied file: {destination.name} <- {source}")
+                    
+                    # Verify file was copied successfully
+                    if not destination.exists():
+                        self.logger.error(f"File copy reported success but file does not exist: {destination}")
+                        return False
+                    
+                    # Verify file size matches
+                    source_size = source.stat().st_size
+                    dest_size = destination.stat().st_size
+                    if source_size != dest_size:
+                        self.logger.error(
+                            f"File copy size mismatch: source={source_size} bytes, "
+                            f"dest={dest_size} bytes for {destination}"
+                        )
+                        return False
+                        
+                except Exception as e:
+                    self.logger.error(f"Failed to copy file {source} to {destination}: {e}")
+                    return False
             
             return True
             
         except OSError as e:
-            self.logger.error(f"Error creating {operation} {destination}: {e}")
+            self.logger.error(f"OS Error creating {operation} {destination}: {e}")
             return False
         except Exception as e:
             self.logger.error(f"Unexpected error creating {operation}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
     
     def export_games(self, platform_name: str, games: List[Dict], force: bool = False) -> Dict[str, int]:
@@ -1258,6 +1333,8 @@ class ArchiveExporter:
         
         total_games = 0
         total_size = 0
+        total_failed = 0
+        total_skipped = 0
         
         for platform, stats in platform_stats.items():
             report.append(f"\n{platform}:")
@@ -1265,7 +1342,7 @@ class ArchiveExporter:
             if stats['skipped'] > 0:
                 report.append(f"  Skipped (already exist): {stats['skipped']}")
             if stats['failed'] > 0:
-                report.append(f"  Failed: {stats['failed']}")
+                report.append(f"  ✗ Failed: {stats['failed']}")
             
             size_mb = stats['total_size'] / (1024 * 1024)
             size_gb = size_mb / 1024
@@ -1277,12 +1354,27 @@ class ArchiveExporter:
             
             total_games += stats['success']
             total_size += stats['total_size']
+            total_failed += stats['failed']
+            total_skipped += stats['skipped']
         
         report.append("\n" + "-" * 70)
         if self.dry_run:
             report.append(f"TOTAL GAMES THAT WOULD BE EXPORTED: {total_games}")
         else:
             report.append(f"TOTAL GAMES EXPORTED: {total_games}")
+        
+        if total_skipped > 0:
+            report.append(f"Total skipped (already exist): {total_skipped}")
+        
+        if total_failed > 0:
+            report.append(f"✗ TOTAL FAILED: {total_failed}")
+            report.append(f"")
+            report.append(f"Check the log file 'archive_export.log' for details on failures.")
+            if self.use_symlinks and not self.dry_run:
+                report.append(f"Note: On Windows, symlink creation requires:")
+                report.append(f"  - Administrator privileges, OR")
+                report.append(f"  - Developer Mode enabled")
+                report.append(f"  Alternatively, use --symlink=false to copy files instead")
         
         total_gb = total_size / (1024 * 1024 * 1024)
         report.append(f"TOTAL SIZE: {total_gb:.2f} GB")

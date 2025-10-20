@@ -258,9 +258,18 @@ When a platform from the Master Archive doesn't have a mapping:
    Enter system information:
    System name [customplatform]: 
    Full name [Custom Platform Name]: 
+   
+   Common file extensions (comma-separated, e.g., .zip,.7z,.bin)
    Extensions [.zip,.7z]: 
-   Emulator command [retroarch]: 
-   RetroArch core (optional): 
+   
+   Emulator setup:
+     Use ES-DE placeholders: %EMULATOR_RETROARCH%, %CORE_RETROARCH%, %ROM%
+     Examples:
+       RetroArch: %EMULATOR_RETROARCH% -L %CORE_RETROARCH%/[core]_libretro.so %ROM%
+       Standalone: /path/to/emulator %ROM%
+   
+   Emulator type (retroarch/standalone) [retroarch]: retroarch
+   RetroArch core name (e.g., mame, nestopia, snes9x): mame
    
    ======================================================================
    CUSTOM SYSTEM XML TO BE ADDED:
@@ -270,7 +279,7 @@ When a platform from the Master Archive doesn't have a mapping:
        <fullname>Custom Platform Name</fullname>
        <path>./roms/customplatform</path>
        <extension>.zip,.7z</extension>
-       <command>retroarch %ROM%</command>
+       <command>%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/mame_libretro.so %ROM%</command>
        <platform>customplatform</platform>
        <theme>customplatform</theme>
      </system>
@@ -278,6 +287,12 @@ When a platform from the Master Archive doesn't have a mapping:
    
    Target file: /home/user/.emulationstation/custom_systems/es_systems.xml
    ```
+
+**ES-DE Command Template Placeholders:**
+- `%EMULATOR_RETROARCH%` - Path to RetroArch executable
+- `%CORE_RETROARCH%` - Path to RetroArch cores directory
+- `%ROM%` - Path to the ROM file being launched
+- Use `[corename]_libretro.so` format for RetroArch cores (e.g., `mame_libretro.so`, `snes9x_libretro.so`)
 
 The script will automatically:
 - Show you exactly what XML will be added to the custom systems file
@@ -463,17 +478,56 @@ Required fields: name, default_destination, description
 
 If you encounter errors:
 
-1. **Permission Denied**: Run with appropriate privileges or check directory ownership
+1. **Symlink Creation Failed (Windows)**:
+   
+   **Error**: `Symlink creation failed: Insufficient privileges`
+   
+   **Solution**: On Windows, creating symlinks requires special privileges. You have two options:
+   
+   **Option A - Enable Developer Mode (Recommended)**:
+   - Open Settings → Update & Security → For Developers
+   - Enable "Developer Mode"
+   - Restart your terminal/command prompt
+   - Run the script again
+   
+   **Option B - Run as Administrator**:
+   - Right-click Command Prompt or PowerShell
+   - Select "Run as Administrator"
+   - Navigate to your script directory
+   - Run the script
+   
+   **Option C - Use Copy Mode Instead**:
    ```bash
-   # Check directory permissions
+   # Copy files instead of creating symlinks (works without special privileges)
+   python init.py --symlink=false --platform "nes" --games ALL
+   ```
+
+2. **Symlinks Not Being Created**:
+   
+   Check the log file `archive_export.log` for detailed error messages. Common issues:
+   - Source files don't exist (check Master Archive mount)
+   - Destination directory permissions
+   - Insufficient privileges (see #1 above)
+   
+   Enable verbose logging to see what's happening:
+   ```bash
+   python init.py --verbose --platform "nes" --games ALL
+   ```
+
+3. **Permission Denied**: Run with appropriate privileges or check directory ownership
+   ```bash
+   # Linux/macOS - Check directory permissions
    ls -ld /path/to/directory
    
    # Create directory manually with correct permissions
    mkdir -p /path/to/directory
    chmod 755 /path/to/directory
+   
+   # Windows - Check folder properties
+   # Right-click folder → Properties → Security tab
    ```
 
-2. **Source Not Found**: Ensure the NFS mount is connected
+4. **Source Not Found**: Ensure the NFS mount is connected
    ```bash
    # Check if mount point exists
    mount | grep Emulators
@@ -482,14 +536,14 @@ If you encounter errors:
    sudo mount -t nfs 192.168.1.3:/Emulators /mnt/Emulators
    ```
 
-3. **Invalid Archive Structure**: Verify the master archive layout matches expectations
+5. **Invalid Archive Structure**: Verify the master archive layout matches expectations
    ```bash
    # Check structure
    ls -la "/mnt/Emulators/Master Archive/"
    # Should show: Games/ and Metadata/ directories
    ```
 
-4. **Configuration Errors**: Validate your `fe_formats.json` file
+6. **Configuration Errors**: Validate your `fe_formats.json` file
    ```bash
    # Test JSON syntax
    python -m json.tool fe_formats.json
