@@ -2,6 +2,13 @@
 
 Export games and metadata from a master archive (NFS mount) to various emulation frontend destinations using symlinks.
 
+## Credits
+
+**Code Captain**: Idgarad Lyracante  
+**Primary AI Developer**: GitHub Copilot (Claude 3.5 Sonnet)
+
+This project was developed through an AI-human collaboration, combining domain expertise with advanced code generation capabilities.
+
 ## Features
 
 - **Multiple Frontend Support**: Configurable formats via JSON (currently ES-DE)
@@ -121,10 +128,20 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
       "name": "Display Name",
       "default_destination": "~/path/to/default/location",
       "roms_path": "subdirectory_for_roms",
+      "metadata_path": null,
       "metadata_subdir": true,
+      "rename_metadata_to_match_rom": false,
       "description": "Brief description",
       "platforms_subdir": true,
       "custom_systems_path": "~/path/to/custom/systems.xml",
+      "metadata_mappings": {
+        "Images/Box - Front": "images/box2dfront",
+        "Images/Box - Back": "images/box2dback",
+        "Images/Screenshot - Gameplay": "images/screenshot",
+        "Videos": "videos/video",
+        "Manuals": "manuals/manual",
+        "Music": null
+      },
       "platform_mappings": {
         "Master Archive Name": "destination_name",
         "Nintendo Entertainment System": "nes"
@@ -138,40 +155,66 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
 
 - **name**: Display name shown to users
 - **default_destination**: Default installation path (~ expands to home)
-- **roms_path**: Subdirectory name for ROMs within destination
-- **metadata_path**: Optional override path for metadata location (e.g., `~/ES-DE/downloaded_media` for AppImage/Flatpak). If `null`, metadata is stored relative to `default_destination` based on `metadata_subdir` setting.
+- **roms_path**: Subdirectory name for ROMs within destination (e.g., `"ROMs"`)
+- **metadata_path**: Optional override path for metadata location (e.g., `"~/ES-DE/downloaded_media"` for AppImage/Flatpak). If `null`, metadata is stored relative to `default_destination` based on `metadata_subdir` setting.
 - **metadata_subdir**: `true` = metadata in ROM folders, `false` = separate structure
+- **rename_metadata_to_match_rom**: `true` = metadata files use ROM filename (ES-DE requirement), `false` = use game name with prefix (see below)
 - **platforms_subdir**: `true` = ROMs organized by platform subdirectories
 - **description**: Brief description of the format
 - **custom_systems_path**: Path to custom systems XML file (for adding unmapped platforms)
 - **platform_mappings**: Dictionary mapping Master Archive platform names to destination directory names
-- **metadata_mappings**: Dictionary mapping Master Archive metadata paths to destination metadata names (see below)
-- **rename_metadata_to_match_rom**: `true` = metadata files use ROM filename (ES-DE requirement), `false` = use game name with prefix
+- **metadata_mappings**: Dictionary mapping Master Archive metadata paths to destination paths with format `"subdirectory/prefix"` (see below)
 
 ### Metadata Mappings
 
-The `metadata_mappings` field controls which metadata from the Master Archive gets exported and how it's named in the destination format. This is crucial because different frontends support different metadata types and naming conventions.
+The `metadata_mappings` field controls which metadata from the Master Archive gets exported and how it's organized in the destination format. This is crucial because different frontends support different metadata types and naming conventions.
 
-**Format**: `"Archive/Path": "destination_name"`
+**Format**: `"Archive/Path": "subdirectory/prefix"`
 
-- **Archive Path**: Use format `"Images/[Subdirectory]"` for specific image types, or just `"Videos"`, `"Manuals"`, etc.
-- **Destination Name**: The name used in the destination (e.g., ES-DE uses `"box2dfront"`, `"screenshot"`, `"video"`)
-- **null**: Set to `null` to explicitly skip that metadata type
+The destination value uses the format `"subdirectory/prefix"` where:
+- **subdirectory**: The metadata subdirectory (e.g., `images`, `videos`, `manuals`)
+- **prefix**: The filename prefix or type identifier (e.g., `box2dfront`, `video`, `manual`)
 
-**Example ES-DE mappings**:
+**Archive Path Examples**:
+- `"Images/Box - Front"` - Specific image type from Master Archive
+- `"Images/Screenshot - Gameplay"` - Gameplay screenshots
+- `"Videos"` - All videos for the platform
+- `"Manuals"` - Game manuals
+- `"Music"` - Background music
+
+**Destination Format**:
+- `"images/box2dfront"` - Files go in `images/` subdirectory with `box2dfront` prefix
+- `"videos/video"` - Files go in `videos/` subdirectory with `video` prefix
+- `"manuals/manual"` - Files go in `manuals/` subdirectory with `manual` prefix
+- `null` - Set to `null` to explicitly skip that metadata type
+
+**Complete ES-DE Example**:
 ```json
 "metadata_mappings": {
-  "Images/Box - Front": "box2dfront",
-  "Images/Box - Back": "box2dback",
-  "Images/Screenshot - Gameplay": "screenshot",
-  "Images/Screenshot - Game Title": "titlescreen",
-  "Images/Fanart - Background": "fanart",
-  "Images/Clear Logo": "wheel",
-  "Videos": "video",
-  "Manuals": "manual",
+  "Images/Box - Front": "images/box2dfront",
+  "Images/Box - Back": "images/box2dback",
+  "Images/Box - 3D": "images/box3d",
+  "Images/Screenshot - Gameplay": "images/screenshot",
+  "Images/Screenshot - Game Title": "images/titlescreen",
+  "Images/Fanart - Background": "images/fanart",
+  "Images/Banner": "images/marquee",
+  "Images/Arcade - Marquee": "images/marquee",
+  "Images/Cart - Front": "images/cover",
+  "Images/Clear Logo": "images/wheel",
+  "Videos": "videos/video",
+  "Manuals": "manuals/manual",
   "Music": null
 }
 ```
+
+**How Files Are Named**:
+- When `rename_metadata_to_match_rom: true` (ES-DE): `mario.png`, `mario.mp4`, `mario.pdf`
+- When `rename_metadata_to_match_rom: false`: `mario-box2dfront.png`, `mario-video.mp4`, `mario-manual.pdf`
+
+**Final Path Examples** (with ES-DE settings):
+- ROM: `~/.emulationstation/ROMs/nes/Super Mario Bros.nes`
+- Metadata: `~/ES-DE/downloaded_media/nes/images/Super Mario Bros.png`
+- Metadata: `~/ES-DE/downloaded_media/nes/videos/Super Mario Bros.mp4`
 
 **Important Notes**:
 - ES-DE only allows **one file per metadata type per game**
@@ -420,12 +463,14 @@ To add support for additional metadata types, edit the `metadata_mappings` in `f
 
 ```json
 "metadata_mappings": {
-  "Images/Box - Front": "box2dfront",
-  "Images/3D Box": "box3d",
-  "Images/Disc": "cover",
-  "Videos": "video"
+  "Images/Box - Front": "images/box2dfront",
+  "Images/3D Box": "images/box3d",
+  "Images/Disc": "images/cover",
+  "Videos": "videos/video"
 }
 ```
+
+Remember to use the `"subdirectory/prefix"` format for the destination values.
 
 If a metadata type isn't supported by the destination format, set it to `null`:
 
