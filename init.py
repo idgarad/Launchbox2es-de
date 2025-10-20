@@ -1095,7 +1095,8 @@ class ArchiveExporter:
             'success': 0,
             'skipped': 0,
             'failed': 0,
-            'total_size': 0
+            'total_size': 0,
+            'games_for_metadata': []  # Track all games that exist (new or skipped)
         }
         
         # Map platform name to destination format name
@@ -1148,9 +1149,11 @@ class ArchiveExporter:
             if self.create_symlink(source_path, dest_path, force):
                 stats['success'] += 1
                 stats['total_size'] += game['size']
+                stats['games_for_metadata'].append(game)  # Track for metadata export
                 print(f"  ✓ {game['name']}")
             elif dest_path.exists() and not self.dry_run:
                 stats['skipped'] += 1
+                stats['games_for_metadata'].append(game)  # Also check metadata for existing games
                 print(f"  ⊘ {game['name']} (already exists)")
             else:
                 stats['failed'] += 1
@@ -1223,7 +1226,7 @@ class ArchiveExporter:
             return stats
         
         dry_run_prefix = "[DRY RUN] " if self.dry_run else ""
-        self.logger.info(f"\n{dry_run_prefix}Exporting metadata for {platform_name} -> {mapped_platform}...")
+        self.logger.info(f"\n{dry_run_prefix}Checking metadata for {len(games)} games: {platform_name} -> {mapped_platform}...")
         
         # Track unmapped directories we encounter
         unmapped_dirs = set()
@@ -1837,10 +1840,15 @@ Examples:
             all_platform_stats[platform] = stats
             
             # Export metadata if requested
-            if not args.no_metadata and stats['success'] > 0:
+            # Check metadata for all games that exist (newly exported or already existing)
+            if not args.no_metadata and stats['games_for_metadata']:
+                games_count = len(stats['games_for_metadata'])
+                if stats['skipped'] > 0:
+                    print(f"\n→ Checking metadata for {games_count} games (including {stats['skipped']} already existing)...")
+                
                 metadata_stats = exporter.export_metadata(
                     platform, 
-                    games_to_export, 
+                    stats['games_for_metadata'],  # Use tracked games instead of all selected
                     metadata_types=args.metadata_types,
                     force=args.force
                 )

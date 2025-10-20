@@ -10,6 +10,7 @@ Export games and metadata from a master archive (NFS mount) to various emulation
 - **Interactive Mode**: Step through platforms and games with y/n/a/q options
 - **Fuzzy Matching**: Find platforms and games by partial name
 - **Symlink or Copy**: Choose to create symlinks (saves space) or copy files (portable)
+- **Smart Metadata Export**: Automatically checks and exports missing metadata even for games that already exist
 - **Dry-run Mode**: Preview what would be exported without creating files
 - **Verbose Logging**: Detailed logging for troubleshooting
 - **Format Defaults**: Each frontend has its own default installation path
@@ -176,6 +177,9 @@ The `metadata_mappings` field controls which metadata from the Master Archive ge
 - Use the `a` option during selection to auto-select the first file for remaining prompts
 - Unmapped metadata directories will be skipped and reported
 - Set metadata to `null` to explicitly ignore it (e.g., `"Music": null`)
+- **Metadata is checked for all games**, including those that already exist in the destination
+  - This ensures any new or missing metadata is exported even if the game ROM was previously exported
+  - Existing metadata files are not overwritten unless `--force` is used
 
 ### Metadata Selection Interactive Mode
 
