@@ -76,7 +76,7 @@ python init.py --dest /home/user/games --platform "snes" --games ALL
 # Dry run - preview without creating files
 python init.py --dry-run --platform ALL --games ALL
 
-# Verbose mode - detailed logging
+# Verbose mode - detailed logging with full file paths
 python init.py --verbose --platform "genesis" --games INTERACTIVE
 
 # Copy files instead of symlinks
@@ -434,6 +434,7 @@ python init.py --dest /custom/path --verbose --platform "nes" --games ALL
 - Fuzzy matching helps find platforms/games without exact names
 - Format defaults make it easy to export to standard locations
 - The `fe_formats.json` file can be extended with new frontend formats
+- Use `--verbose` to see full file paths during symlink/copy operations (helpful for debugging)
 
 ## Path Validation and Error Handling
 

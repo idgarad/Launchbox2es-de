@@ -203,6 +203,14 @@ class ArchiveExporter:
         mapped_name = self.platform_mappings.get(archive_platform_name)
         
         if not mapped_name:
+            # Check if it exists as a custom system before warning
+            if self.dest_format == 'es-de':
+                existing_system = self.check_existing_custom_system(archive_platform_name)
+                if existing_system:
+                    # Platform exists as custom system, no warning needed
+                    return existing_system
+            
+            # Only warn if it's not a custom system
             self.logger.warning(f"No platform mapping found for: {archive_platform_name}")
             if archive_platform_name not in self.unmapped_platforms:
                 self.unmapped_platforms.append(archive_platform_name)
@@ -951,7 +959,12 @@ class ArchiveExporter:
             
             # Dry run mode - simulate without creating
             if self.dry_run:
-                self.logger.debug(f"[DRY RUN] Would {operation}: {destination.name} -> {source}")
+                # Log with full paths in verbose mode, short names otherwise
+                if self.verbose:
+                    self.logger.info(f"[DRY RUN] Would {operation}: {destination} -> {source}")
+                else:
+                    self.logger.debug(f"[DRY RUN] Would {operation}: {destination.name} -> {source}")
+                
                 # Check if destination would be overwritten
                 if destination.exists() or destination.is_symlink():
                     if force:
@@ -985,7 +998,12 @@ class ArchiveExporter:
             if self.use_symlinks:
                 try:
                     os.symlink(source, destination)
-                    self.logger.debug(f"Created symlink: {destination.name} -> {source}")
+                    
+                    # Log with full paths in verbose mode, short names otherwise
+                    if self.verbose:
+                        self.logger.info(f"Created symlink: {destination} -> {source}")
+                    else:
+                        self.logger.debug(f"Created symlink: {destination.name} -> {source}")
                     
                     # Verify symlink was created successfully
                     if not destination.is_symlink():
@@ -1017,7 +1035,12 @@ class ArchiveExporter:
                 try:
                     import shutil
                     shutil.copy2(source, destination)
-                    self.logger.debug(f"Copied file: {destination.name} <- {source}")
+                    
+                    # Log with full paths in verbose mode, short names otherwise
+                    if self.verbose:
+                        self.logger.info(f"Copied file: {destination} <- {source}")
+                    else:
+                        self.logger.debug(f"Copied file: {destination.name} <- {source}")
                     
                     # Verify file was copied successfully
                     if not destination.exists():
