@@ -142,6 +142,62 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
 - **description**: Brief description of the format
 - **custom_systems_path**: Path to custom systems XML file (for adding unmapped platforms)
 - **platform_mappings**: Dictionary mapping Master Archive platform names to destination directory names
+- **metadata_mappings**: Dictionary mapping Master Archive metadata paths to destination metadata names (see below)
+
+### Metadata Mappings
+
+The `metadata_mappings` field controls which metadata from the Master Archive gets exported and how it's named in the destination format. This is crucial because different frontends support different metadata types and naming conventions.
+
+**Format**: `"Archive/Path": "destination_name"`
+
+- **Archive Path**: Use format `"Images/[Subdirectory]"` for specific image types, or just `"Videos"`, `"Manuals"`, etc.
+- **Destination Name**: The name used in the destination (e.g., ES-DE uses `"box2dfront"`, `"screenshot"`, `"video"`)
+- **null**: Set to `null` to explicitly skip that metadata type
+
+**Example ES-DE mappings**:
+```json
+"metadata_mappings": {
+  "Images/Box - Front": "box2dfront",
+  "Images/Box - Back": "box2dback",
+  "Images/Screenshot - Gameplay": "screenshot",
+  "Images/Screenshot - Game Title": "titlescreen",
+  "Images/Fanart - Background": "fanart",
+  "Images/Clear Logo": "wheel",
+  "Videos": "video",
+  "Manuals": "manual",
+  "Music": null
+}
+```
+
+**Important Notes**:
+- ES-DE only allows **one file per metadata type per game**
+- If multiple files exist (e.g., 4 screenshots), the script will prompt you to choose one
+- Use the `a` option during selection to auto-select the first file for remaining prompts
+- Unmapped metadata directories will be skipped and reported
+- Set metadata to `null` to explicitly ignore it (e.g., `"Music": null`)
+
+### Metadata Selection Interactive Mode
+
+When multiple metadata files exist for a game:
+
+```
+======================================================================
+Multiple Images/Screenshot - Gameplay files found for: Super Mario Bros
+Destination allows only one file as: screenshot
+======================================================================
+  1. Super Mario Bros-01.png (245.3 KB)
+  2. Super Mario Bros-02.png (238.7 KB)
+  3. Super Mario Bros-03.png (251.2 KB)
+  4. Super Mario Bros-04.png (247.9 KB)
+  s. Skip this metadata
+  a. Always use first file (stop prompting)
+
+Select file [1-4/s/a]: 
+```
+
+- Select a number to choose that specific file
+- Press `s` to skip this metadata for this game
+- Press `a` to automatically use the first file for all remaining conflicts
 
 ### Example: Adding RetroBat Support
 
@@ -238,6 +294,34 @@ Edit `fe_formats.json` and add entries to `platform_mappings`:
   "Nintendo Entertainment System": "nes",
   "Super Nintendo Entertainment System": "snes",
   "Your Custom Platform": "customplatform"
+}
+```
+
+### Handling Unmapped Metadata Directories
+
+The script will automatically skip metadata directories that aren't mapped in `metadata_mappings` and notify you:
+
+```
+Skipping unmapped metadata directory: Images/3D Box (not supported by es-de)
+Skipping unmapped metadata directory: Images/Disc (not supported by es-de)
+```
+
+To add support for additional metadata types, edit the `metadata_mappings` in `fe_formats.json`:
+
+```json
+"metadata_mappings": {
+  "Images/Box - Front": "box2dfront",
+  "Images/3D Box": "box3d",
+  "Images/Disc": "cover",
+  "Videos": "video"
+}
+```
+
+If a metadata type isn't supported by the destination format, set it to `null`:
+
+```json
+"metadata_mappings": {
+  "Music": null
 }
 ```
 

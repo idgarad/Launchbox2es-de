@@ -81,6 +81,7 @@ class ArchiveExporter:
         self.available_platforms = {}
         self.platform_games = {}
         self.unmapped_platforms = []  # Track platforms without mappings
+        self.auto_select_metadata = False  # Flag for auto-selecting first metadata file
         
         # Validate paths
         self._validate_paths()
@@ -1027,25 +1028,23 @@ class ArchiveExporter:
                        metadata_types: Optional[List[str]] = None, 
                        force: bool = False) -> Dict[str, int]:
         """
-        Export metadata for selected games
+        Export metadata for selected games using format-specific metadata mappings
         
         Args:
             platform_name: Platform name (from master archive)
             games: List of game info dictionaries
-            metadata_types: List of metadata types to export
+            metadata_types: List of metadata types to export (deprecated - uses mappings now)
             force: Whether to overwrite existing files
             
         Returns:
             Dictionary with metadata export statistics
         """
-        if metadata_types is None:
-            metadata_types = ['Images', 'Videos', 'Manuals']
-        
         stats = {
             'images': 0,
             'videos': 0,
             'manuals': 0,
             'music': 0,
+            'skipped_unmapped': 0,
             'total': 0
         }
         
@@ -1055,37 +1054,189 @@ class ArchiveExporter:
             self.logger.warning(f"Skipping metadata export for unmapped platform: {platform_name}")
             return stats
         
+        # Get metadata mappings from format config
+        metadata_mappings = self.format_config.get('metadata_mappings', {})
+        if not metadata_mappings:
+            self.logger.info(f"No metadata mappings configured for format: {self.dest_format}")
+            return stats
+        
         dry_run_prefix = "[DRY RUN] " if self.dry_run else ""
         self.logger.info(f"\n{dry_run_prefix}Exporting metadata for {platform_name} -> {mapped_platform}...")
+        
+        # Track unmapped directories we encounter
+        unmapped_dirs = set()
         
         for game in games:
             game_name = game['name']
             
-            for metadata_type in metadata_types:
-                metadata_files = self.find_metadata(platform_name, game_name, metadata_type)
+            # Process each metadata mapping
+            for archive_path, dest_name in metadata_mappings.items():
+                # Skip if destination is null (explicitly not supported)
+                if dest_name is None:
+                    continue
                 
-                for metadata_file in metadata_files:
-                    # Preserve directory structure relative to metadata type
+                # Parse archive path (e.g., "Images/Box - Front" or "Videos")
+                path_parts = archive_path.split('/')
+                metadata_type = path_parts[0]  # Images, Videos, Manuals, Music
+                
+                # Build the source path
+                if len(path_parts) > 1:
+                    # Has subdirectory (e.g., Images/Box - Front)
+                    subdir = '/'.join(path_parts[1:])
+                    metadata_base = self.source / 'Metadata' / metadata_type / platform_name / subdir
+                else:
+                    # No subdirectory (e.g., Videos, Manuals)
                     metadata_base = self.source / 'Metadata' / metadata_type / platform_name
-                    relative_path = metadata_file.relative_to(metadata_base)
-                    
-                    # Destination path based on format configuration
-                    roms_base = self.format_config['roms_path']
-                    if self.format_config['metadata_subdir']:
-                        # ES-DE style: metadata within platform ROM directory
-                        if roms_base:
-                            dest_path = self.destination / roms_base / mapped_platform / metadata_type / relative_path
-                        else:
-                            dest_path = self.destination / mapped_platform / metadata_type / relative_path
+                
+                # Check if this metadata directory exists
+                if not metadata_base.exists():
+                    if archive_path not in unmapped_dirs:
+                        self.logger.debug(f"Metadata directory not found: {metadata_base}")
+                        unmapped_dirs.add(archive_path)
+                    continue
+                
+                # Find matching files for this game
+                matching_files = self._find_metadata_files(metadata_base, game_name)
+                
+                if not matching_files:
+                    continue
+                
+                # If multiple files found, let user choose (unless in non-interactive mode)
+                selected_file = None
+                if len(matching_files) == 1:
+                    selected_file = matching_files[0]
+                else:
+                    # Multiple files - need to choose one
+                    selected_file = self._select_metadata_file(
+                        matching_files, 
+                        game_name, 
+                        archive_path, 
+                        dest_name
+                    )
+                
+                if not selected_file:
+                    continue
+                
+                # Build destination path
+                # ES-DE format: [platform]/images/[gamename]-[type].ext
+                dest_filename = f"{game_name}-{dest_name}{selected_file.suffix}"
+                
+                if self.format_config['metadata_subdir']:
+                    # Metadata within ROM directory
+                    roms_base = self.format_config.get('roms_path', '')
+                    if roms_base:
+                        dest_path = self.destination / roms_base / mapped_platform / 'images' / dest_filename
                     else:
-                        # Alternative: separate metadata directory structure
-                        dest_path = self.destination / 'metadata' / mapped_platform / metadata_type / relative_path
-                    
-                    if self.create_symlink(metadata_file, dest_path, force):
-                        stats[metadata_type.lower()] += 1
-                        stats['total'] += 1
+                        dest_path = self.destination / mapped_platform / 'images' / dest_filename
+                else:
+                    # Separate metadata structure
+                    dest_path = self.destination / 'metadata' / mapped_platform / 'images' / dest_filename
+                
+                # Create symlink/copy
+                if self.create_symlink(selected_file, dest_path, force):
+                    stats[metadata_type.lower()] += 1
+                    stats['total'] += 1
+        
+        # Report any unmapped directories we found
+        if unmapped_dirs:
+            # Find directories that exist but aren't mapped
+            metadata_base_path = self.source / 'Metadata'
+            if metadata_base_path.exists():
+                for metadata_type in ['Images', 'Videos', 'Manuals', 'Music']:
+                    type_path = metadata_base_path / metadata_type / platform_name
+                    if type_path.exists():
+                        for subdir in type_path.iterdir():
+                            if subdir.is_dir():
+                                archive_path = f"{metadata_type}/{subdir.name}"
+                                if archive_path not in metadata_mappings:
+                                    self.logger.info(
+                                        f"Skipping unmapped metadata directory: {archive_path} "
+                                        f"(not supported by {self.dest_format})"
+                                    )
+                                    stats['skipped_unmapped'] += 1
         
         return stats
+    
+    def _find_metadata_files(self, base_path: Path, game_name: str) -> List[Path]:
+        """
+        Find metadata files matching the game name
+        
+        Args:
+            base_path: Base directory to search
+            game_name: Game name to match
+            
+        Returns:
+            List of matching file paths
+        """
+        matching_files = []
+        
+        if not base_path.exists():
+            return matching_files
+        
+        # Search for files in this directory (not recursive for mapped dirs)
+        for file_path in base_path.iterdir():
+            if file_path.is_file():
+                # Check if filename starts with game name
+                if file_path.stem.startswith(game_name):
+                    matching_files.append(file_path)
+        
+        return matching_files
+    
+    def _select_metadata_file(self, files: List[Path], game_name: str, 
+                              archive_path: str, dest_name: str) -> Optional[Path]:
+        """
+        Let user select which metadata file to use when multiple exist
+        
+        Args:
+            files: List of candidate files
+            game_name: Game name
+            archive_path: Archive metadata path
+            dest_name: Destination metadata name
+            
+        Returns:
+            Selected file path, or None if skipped
+        """
+        if not files:
+            return None
+        
+        # In non-interactive mode, dry-run, or auto-select mode, just take the first file
+        if self.dry_run:
+            self.logger.info(
+                f"Multiple {archive_path} files for '{game_name}': "
+                f"would use {files[0].name}"
+            )
+            return files[0]
+        
+        if self.auto_select_metadata:
+            return files[0]
+        
+        print(f"\n{'='*70}")
+        print(f"Multiple {archive_path} files found for: {game_name}")
+        print(f"Destination allows only one file as: {dest_name}")
+        print(f"{'='*70}")
+        
+        for i, file_path in enumerate(files, 1):
+            size_kb = file_path.stat().st_size / 1024
+            print(f"  {i}. {file_path.name} ({size_kb:.1f} KB)")
+        
+        print(f"  s. Skip this metadata")
+        print(f"  a. Always use first file (stop prompting)")
+        
+        while True:
+            choice = input(f"\nSelect file [1-{len(files)}/s/a]: ").strip().lower()
+            
+            if choice == 's':
+                return None
+            elif choice == 'a':
+                # Set a flag to auto-select first file from now on
+                self.auto_select_metadata = True
+                return files[0]
+            elif choice.isdigit():
+                index = int(choice) - 1
+                if 0 <= index < len(files):
+                    return files[index]
+            
+            print("Invalid choice. Please try again.")
     
     def generate_report(self, platform_stats: Dict[str, Dict]) -> str:
         """
