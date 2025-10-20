@@ -160,7 +160,7 @@
     "retroarch": {
       "name": "RetroArch",
       "default_destination": "~/.config/retroarch",
-      "roms_path": "~/retroarch_roms",
+      "roms_path": "retroarch_roms",
       "metadata_path": "~/.config/media",
       "metadata_subdir": true,
       "rename_metadata_to_match_rom": true,
