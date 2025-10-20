@@ -1834,38 +1834,54 @@ class ArchiveExporter:
         xml_conversions = self.format_config.get('xml_field_conversions', {})
         
         if not gamelist_path:
-            self.logger.debug(f"Format {self.dest_format} does not support gamelist XML")
+            self.logger.info(f"✗ Format {self.dest_format} does not support gamelist XML (no gamelist_path configured)")
             return False
         
         # Check if we have XML metadata loaded
         if not self.xml_metadata:
-            self.logger.debug("No XML metadata loaded")
+            self.logger.warning("✗ No XML metadata loaded - use --infoxml to provide metadata file")
             return False
         
         # Map platform name
         mapped_platform = self.map_platform_name(platform_name)
         if not mapped_platform:
+            self.logger.warning(f"✗ Could not map platform name: {platform_name}")
             return False
         
         # Check if we have metadata for this platform
         if platform_name not in self.xml_metadata:
-            self.logger.debug(f"No XML metadata found for platform: {platform_name}")
+            # Try to show available platforms for debugging
+            available = list(self.xml_metadata.keys())[:5]
+            self.logger.warning(f"✗ No XML metadata found for platform: '{platform_name}'")
+            if available:
+                self.logger.info(f"  Available platforms in XML: {', '.join(available)}{'...' if len(self.xml_metadata) > 5 else ''}")
             return False
         
         platform_metadata = self.xml_metadata[platform_name]
+        
+        if self.verbose:
+            self.logger.info(f"  Found {len(platform_metadata)} games in XML metadata for {platform_name}")
         
         # Build gamelist XML path
         gamelist_base = Path(gamelist_path).expanduser()
         gamelist_dir = gamelist_base / mapped_platform
         gamelist_file = gamelist_dir / 'gamelist.xml'
         
+        if self.verbose:
+            self.logger.info(f"  Gamelist path: {gamelist_file}")
+        
         if self.dry_run:
             self.logger.info(f"[DRY RUN] Would create gamelist.xml at: {gamelist_file}")
+            matched = sum(1 for g in games if g['name'] in platform_metadata)
+            self.logger.info(f"[DRY RUN] Would include {matched}/{len(games)} games with metadata")
             return True
         
         try:
             # Create directory if needed
             gamelist_dir.mkdir(parents=True, exist_ok=True)
+            
+            if self.verbose:
+                self.logger.info(f"  Created directory: {gamelist_dir}")
             
             # Build XML structure
             import xml.etree.ElementTree as ET
@@ -1874,11 +1890,15 @@ class ArchiveExporter:
             root = ET.Element('gameList')
             
             games_added = 0
+            games_skipped = 0
             for game in games:
                 game_name = game['name']
                 
                 # Check if we have metadata for this game
                 if game_name not in platform_metadata:
+                    games_skipped += 1
+                    if self.verbose:
+                        self.logger.debug(f"  No metadata for game: {game_name}")
                     continue
                 
                 source_data = platform_metadata[game_name]
@@ -1916,7 +1936,14 @@ class ArchiveExporter:
                 games_added += 1
             
             if games_added == 0:
-                self.logger.info(f"No matching metadata found for any games in {platform_name}")
+                self.logger.warning(f"✗ No matching metadata found for any games in {platform_name}")
+                if games_skipped > 0:
+                    self.logger.info(f"  {games_skipped} game(s) had no matching metadata in XML")
+                    if self.verbose and games_skipped <= 10:
+                        sample_games = [g['name'] for g in games[:5]]
+                        sample_xml = list(platform_metadata.keys())[:5]
+                        self.logger.info(f"  Sample exported games: {', '.join(sample_games)}")
+                        self.logger.info(f"  Sample XML games: {', '.join(sample_xml)}")
                 return False
             
             # Write XML file with pretty formatting
@@ -1930,7 +1957,10 @@ class ArchiveExporter:
             with open(gamelist_file, 'w', encoding='utf-8') as f:
                 f.write(pretty_xml)
             
-            self.logger.info(f"✓ Created gamelist.xml for {platform_name} with {games_added} games")
+            self.logger.info(f"✓ Created gamelist.xml: {gamelist_file}")
+            self.logger.info(f"  Included {games_added} game(s) with metadata")
+            if games_skipped > 0:
+                self.logger.info(f"  Skipped {games_skipped} game(s) without matching metadata")
             return True
             
         except Exception as e:
