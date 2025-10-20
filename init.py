@@ -89,6 +89,8 @@ class ArchiveExporter:
         self.unmapped_platforms = []  # Track platforms without mappings
         self.auto_select_metadata = False  # Flag for auto-selecting first metadata file
         self.metadata_subdir_cache = {}  # Cache subdirectory selections per archive_path
+        self.global_metadata_subdirs = None  # Global list of selected subdirectories for all platforms
+        self.metadata_subdirs_scanned = False  # Flag to track if we've done the global scan
         
         # Validate paths
         self._validate_paths()
@@ -1250,6 +1252,9 @@ class ArchiveExporter:
         dry_run_prefix = "[DRY RUN] " if self.dry_run else ""
         self.logger.info(f"\n{dry_run_prefix}Checking metadata for {len(games)} games: {platform_name} -> {mapped_platform}...")
         
+        # Pre-scan all metadata paths and prompt for subdirectory selections once
+        self._prescan_metadata_subdirectories(platform_name)
+        
         # Track unmapped directories we encounter
         unmapped_dirs = set()
         
@@ -1481,66 +1486,177 @@ class ArchiveExporter:
         
         return sorted(subdirs)
     
-    def _select_metadata_subdirectories(self, subdirs: List[str], archive_path: str) -> List[str]:
+    def _scan_all_metadata_subdirectories(self) -> None:
         """
-        Let user select which subdirectories to search for metadata
+        Scan ALL platforms and ALL metadata paths to build a comprehensive list of subdirectories.
+        Prompt the user ONCE to select which subdirectories to use globally across all platforms.
+        This ensures the user only needs to make one selection (e.g., "North America, Europe, Japan")
+        and those selections will be applied everywhere.
+        """
+        if self.metadata_subdirs_scanned:
+            # Already scanned
+            return
+        
+        if self.dry_run or self.auto_select_metadata:
+            # In dry-run or auto-select mode, skip scanning and use all subdirectories
+            self.global_metadata_subdirs = None  # Will use all subdirs
+            self.metadata_subdirs_scanned = True
+            return
+        
+        metadata_mappings = self.format_config.get('metadata_mappings', {})
+        if not metadata_mappings:
+            self.metadata_subdirs_scanned = True
+            return
+        
+        self.logger.info(f"\nScanning all platforms for metadata subdirectories...")
+        
+        # Collect ALL unique subdirectories across all platforms and metadata types
+        all_subdirs = set()
+        platforms_checked = 0
+        
+        # Get all available platforms from the Games directory
+        games_dir = self.source / 'Games'
+        if not games_dir.exists():
+            self.metadata_subdirs_scanned = True
+            return
+        
+        platforms = [p.name for p in games_dir.iterdir() if p.is_dir()]
+        
+        for platform_name in platforms:
+            platforms_checked += 1
+            if platforms_checked % 10 == 0:
+                print(f"  Scanning platform {platforms_checked}/{len(platforms)}...", end='\r')
+            
+            for archive_path, dest_name in metadata_mappings.items():
+                # Skip if destination is null
+                if dest_name is None:
+                    continue
+                
+                # Parse archive path (e.g., "Images/Box - Front" or "Videos")
+                path_parts = archive_path.split('/')
+                metadata_type = path_parts[0]
+                
+                # Build the source path
+                if len(path_parts) > 1:
+                    subdir = '/'.join(path_parts[1:])
+                    metadata_base = self.source / 'Metadata' / metadata_type / platform_name / subdir
+                else:
+                    metadata_base = self.source / 'Metadata' / metadata_type / platform_name
+                
+                # Check if directory exists
+                if not metadata_base.exists():
+                    continue
+                
+                # Get subdirectories and add to global set
+                subdirs = self._get_metadata_subdirectories(metadata_base)
+                all_subdirs.update(subdirs)
+        
+        print()  # Clear the progress line
+        
+        # If we found subdirectories, prompt user to select them globally
+        if all_subdirs:
+            subdirs_sorted = sorted(all_subdirs)
+            
+            print(f"\n{'='*70}")
+            print(f"GLOBAL METADATA SUBDIRECTORY SELECTION")
+            print(f"{'='*70}")
+            print(f"Found {len(subdirs_sorted)} unique subdirectory(ies) across all platforms:")
+            for i, subdir in enumerate(subdirs_sorted, 1):
+                print(f"  {i}. {subdir}")
+            
+            print(f"\nThese subdirectories contain regional, language, or variant metadata.")
+            print(f"Select which ones to use - your selection will be applied to")
+            print(f"ALL platforms and ALL metadata types throughout the export.")
+            print(f"\nOptions:")
+            print(f"  Enter numbers (comma-separated) to select specific subdirectories")
+            print(f"  a - Select all subdirectories")
+            print(f"  n - Skip subdirectories (search base directories only)")
+            print(f"{'='*70}")
+            
+            while True:
+                choice = input(f"\nSelect subdirectories [1-{len(subdirs_sorted)}/a/n]: ").strip().lower()
+                
+                if choice == 'a':
+                    self.global_metadata_subdirs = subdirs_sorted
+                    print(f"✓ Selected all {len(subdirs_sorted)} subdirectories")
+                    break
+                elif choice == 'n':
+                    self.global_metadata_subdirs = []
+                    print(f"✓ Will search base directories only (no subdirectories)")
+                    break
+                elif choice:
+                    try:
+                        # Parse comma-separated numbers
+                        selected_indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                        selected = [subdirs_sorted[i] for i in selected_indices if 0 <= i < len(subdirs_sorted)]
+                        
+                        if selected:
+                            self.global_metadata_subdirs = selected
+                            print(f"✓ Selected {len(selected)} subdirectory(ies): {', '.join(selected)}")
+                            break
+                        else:
+                            print("Invalid selection. Please try again.")
+                    except (ValueError, IndexError):
+                        print("Invalid input. Please enter numbers separated by commas, or 'a' for all, 'n' for none.")
+                else:
+                    print("Please make a selection.")
+            
+            print(f"\n✓ Global subdirectory selection complete. These will be used for all platforms.\n")
+        else:
+            self.logger.info(f"No metadata subdirectories found in archive")
+            self.global_metadata_subdirs = []
+        
+        self.metadata_subdirs_scanned = True
+    
+    def _prescan_metadata_subdirectories(self, platform_name: str) -> None:
+        """
+        Ensure the global metadata subdirectory scan has been performed.
+        The actual scanning is done once across all platforms by _scan_all_metadata_subdirectories.
         
         Args:
-            subdirs: List of available subdirectories
-            archive_path: Archive metadata path (for display)
+            platform_name: Platform name (from master archive) - kept for compatibility
+        """
+        # The global scan is now done once in export_games before any platform processing
+        # This method is kept for compatibility but no longer does platform-specific scanning
+        pass
+    
+    def _select_metadata_subdirectories(self, subdirs: List[str], archive_path: str) -> List[str]:
+        """
+        Filter available subdirectories based on global user selection.
+        
+        Args:
+            subdirs: List of available subdirectories in this specific path
+            archive_path: Archive metadata path (for caching)
             
         Returns:
-            List of selected subdirectory names (empty list means search base directory only)
+            List of selected subdirectory names that exist in this path
         """
         # Check cache first
         if archive_path in self.metadata_subdir_cache:
             return self.metadata_subdir_cache[archive_path]
         
-        if not subdirs or self.dry_run or self.auto_select_metadata:
+        if not subdirs:
+            self.metadata_subdir_cache[archive_path] = []
+            return []
+        
+        if self.dry_run or self.auto_select_metadata:
             # In dry-run or auto-select mode, use all subdirectories
             self.metadata_subdir_cache[archive_path] = subdirs
             return subdirs
         
-        print(f"\n{'='*70}")
-        print(f"SUBDIRECTORIES FOUND: {archive_path}")
-        print(f"{'='*70}")
-        print(f"Found {len(subdirs)} subdirectory(ies):")
-        for i, subdir in enumerate(subdirs, 1):
-            print(f"  {i}. {subdir}")
+        # Use global selection if available
+        if self.global_metadata_subdirs is None:
+            # No global selection made (shouldn't happen, but fallback to all)
+            selected = subdirs
+        elif not self.global_metadata_subdirs:
+            # User chose to skip subdirectories globally
+            selected = []
+        else:
+            # Filter subdirs to only those in the global selection
+            selected = [s for s in subdirs if s in self.global_metadata_subdirs]
         
-        print(f"\nOptions:")
-        print(f"  Enter numbers (comma-separated) to select specific subdirectories")
-        print(f"  a - Select all subdirectories")
-        print(f"  n - Skip subdirectories (search base directory only)")
-        print(f"{'='*70}")
-        
-        while True:
-            choice = input(f"\nSelect subdirectories [1-{len(subdirs)}/a/n]: ").strip().lower()
-            
-            if choice == 'a':
-                print(f"✓ Selected all {len(subdirs)} subdirectories")
-                self.metadata_subdir_cache[archive_path] = subdirs
-                return subdirs
-            elif choice == 'n':
-                print(f"✓ Will search base directory only")
-                self.metadata_subdir_cache[archive_path] = []
-                return []
-            elif choice:
-                try:
-                    # Parse comma-separated numbers
-                    selected_indices = [int(x.strip()) - 1 for x in choice.split(',')]
-                    selected = [subdirs[i] for i in selected_indices if 0 <= i < len(subdirs)]
-                    
-                    if selected:
-                        print(f"✓ Selected {len(selected)} subdirectory(ies): {', '.join(selected)}")
-                        self.metadata_subdir_cache[archive_path] = selected
-                        return selected
-                    else:
-                        print("Invalid selection. Please try again.")
-                except (ValueError, IndexError):
-                    print("Invalid input. Please enter numbers separated by commas, or 'a' for all, 'n' for none.")
-            else:
-                print("Please make a selection.")
+        self.metadata_subdir_cache[archive_path] = selected
+        return selected
     
     def _find_metadata_files(self, base_path: Path, game_name: str, metadata_type: str = None, 
                             subdirs: List[str] = None) -> List[Path]:
@@ -2024,6 +2140,11 @@ Examples:
             else:
                 print("No platform selected. Exiting.")
                 return 0
+        
+        # Perform global metadata subdirectory scan before processing any platforms
+        # This ensures the user only needs to make one selection for all platforms
+        if platforms_to_export and not args.no_metadata:
+            exporter._scan_all_metadata_subdirectories()
         
         # Process each platform
         all_platform_stats = {}

@@ -211,33 +211,59 @@ The `rename_metadata_to_match_rom` configuration option controls how metadata fi
 
 ### Metadata Subdirectory Selection
 
-When the script encounters subdirectories within a metadata path (e.g., regional variants like "Europe"/"North America" or architectural variants like "Cocktail"/"Upright"), you'll be prompted to select which ones to use:
+**Global Pre-Scanning**: Before processing any games, the script performs a comprehensive scan of **all platforms** in your Master Archive to discover all unique subdirectories across all metadata types. This creates a unified list of regional and variant options (e.g., "Europe", "North America", "Japan", "World", "Cocktail", "Upright").
+
+You'll be prompted **once** at the beginning to select which subdirectories to use globally. Your selection will be applied to ALL platforms and ALL metadata types throughout the entire export session.
+
+**Example Workflow**:
 
 ```
+Scanning all platforms for metadata subdirectories...
+  Scanning platform 50/150...
+  
 ======================================================================
-SUBDIRECTORIES FOUND: Images/Arcade - Marquee
+GLOBAL METADATA SUBDIRECTORY SELECTION
 ======================================================================
-Found 3 subdirectory(ies):
-  1. Cocktail
+Found 8 unique subdirectory(ies) across all platforms:
+  1. Asia
   2. Europe
-  3. North America
+  3. Japan
+  4. North America
+  5. USA
+  6. World
+  7. Cocktail
+  8. Upright
+
+These subdirectories contain regional, language, or variant metadata.
+Select which ones to use - your selection will be applied to
+ALL platforms and ALL metadata types throughout the export.
 
 Options:
   Enter numbers (comma-separated) to select specific subdirectories
   a - Select all subdirectories
-  n - Skip subdirectories (search base directory only)
+  n - Skip subdirectories (search base directories only)
 ======================================================================
 
-Select subdirectories [1-3/a/n]: 2,3
-✓ Selected 2 subdirectory(ies): Europe, North America
+Select subdirectories [1-8/a/n]: 3,4,5,6
+✓ Selected 4 subdirectory(ies): Japan, North America, USA, World
+
+✓ Global subdirectory selection complete. These will be used for all platforms.
 ```
 
-- **Comma-separated numbers**: Select specific subdirectories (e.g., `2,3` for Europe and North America)
-- **a**: Select all subdirectories (search all variants)
-- **n**: Skip subdirectories (search only the base directory)
-- **Selection is cached**: You'll only be prompted once per metadata type during the session
+**Selection Options**:
+- **Comma-separated numbers**: Select specific subdirectories (e.g., `3,4,5,6` for Japan, North America, USA, World)
+- **a**: Select all subdirectories (include all regional variants)
+- **n**: Skip subdirectories entirely (search only base directories)
+- **One-time selection**: Your choice applies to the entire export session
+- **Intelligent filtering**: Only subdirectories that actually exist in each metadata path are used
 
-After selecting subdirectories, if multiple files are found across the selected subdirectories, you'll be prompted to choose which specific file to use.
+**Benefits**:
+- ✅ **Single prompt**: Make one decision for the entire export
+- ✅ **Comprehensive view**: See all available regional/variant options upfront
+- ✅ **Consistent results**: Same subdirectories used across all platforms
+- ✅ **Efficient**: No repeated prompting during game processing
+
+After the global subdirectory selection completes, the script proceeds to process each platform. If multiple files are found within the selected subdirectories for a specific game, you'll still be prompted to choose which file to use.
 
 ### Metadata File Selection Interactive Mode
 
