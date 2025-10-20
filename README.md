@@ -295,10 +295,16 @@ When a platform from the Master Archive doesn't have a mapping:
 - Use `[corename]_libretro.so` format for RetroArch cores (e.g., `mame_libretro.so`, `snes9x_libretro.so`)
 
 The script will automatically:
+- **Check for existing custom systems** from previous runs to avoid duplicates
 - Show you exactly what XML will be added to the custom systems file
 - Create/update `~/.emulationstation/custom_systems/es_systems.xml`
 - Add the platform mapping for the current session
 - Create the appropriate directory structure
+
+**Note:** If you run the script multiple times with the same unmapped platform:
+- First run: Prompts you to create the custom system
+- Subsequent runs: Automatically detects the existing custom system and uses it
+- Output: `ℹ Using existing custom system for 'Platform Name': systemname`
 
 ### Adding Platform Mappings Manually
 

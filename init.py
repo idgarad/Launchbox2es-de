@@ -209,6 +209,51 @@ class ArchiveExporter:
         
         return mapped_name
     
+    def check_existing_custom_system(self, archive_platform_name: str) -> Optional[str]:
+        """
+        Check if a custom system already exists for this platform in ES-DE custom systems XML
+        
+        Args:
+            archive_platform_name: Platform name from master archive
+            
+        Returns:
+            System name if found, None otherwise
+        """
+        if not self.custom_systems_path:
+            return None
+        
+        custom_systems_file = Path(self.custom_systems_path).expanduser()
+        
+        if not custom_systems_file.exists():
+            return None
+        
+        try:
+            import xml.etree.ElementTree as ET
+            
+            tree = ET.parse(custom_systems_file)
+            root = tree.getroot()
+            
+            # Look through all systems to find one with matching fullname or close match
+            for system in root.findall('system'):
+                name_elem = system.find('name')
+                fullname_elem = system.find('fullname')
+                
+                if name_elem is not None and fullname_elem is not None:
+                    # Check if fullname matches archive platform name
+                    if fullname_elem.text == archive_platform_name:
+                        system_name = name_elem.text
+                        self.logger.info(
+                            f"Found existing custom system for '{archive_platform_name}': {system_name}"
+                        )
+                        # Add to platform mappings for this session
+                        self.platform_mappings[archive_platform_name] = system_name
+                        return system_name
+            
+        except Exception as e:
+            self.logger.warning(f"Error checking existing custom systems: {e}")
+        
+        return None
+    
     def prompt_add_custom_system(self, archive_platform_name: str) -> Optional[Dict]:
         """
         Prompt user to add a custom system for an unmapped platform
@@ -312,7 +357,10 @@ class ArchiveExporter:
                 name_elem = system.find('name')
                 if name_elem is not None and name_elem.text == custom_system['name']:
                     self.logger.warning(f"System '{custom_system['name']}' already exists in custom systems")
-                    return False
+                    # Add to platform mappings for this session even though we're not adding it
+                    self.platform_mappings[custom_system['archive_name']] = custom_system['name']
+                    print(f"ℹ System '{custom_system['name']}' already exists, using existing configuration")
+                    return True
             
             # Create new system element
             system = ET.SubElement(root, 'system')
@@ -1025,17 +1073,27 @@ class ArchiveExporter:
         mapped_platform = self.map_platform_name(platform_name)
         
         if not mapped_platform:
-            # Offer to add as custom system
-            if self.dest_format == 'es-de' and not self.dry_run:
-                custom_system = self.prompt_add_custom_system(platform_name)
-                if custom_system:
-                    if self.update_es_systems_xml(custom_system):
-                        mapped_platform = custom_system['name']
+            # Check if it already exists as a custom system from a previous run
+            if self.dest_format == 'es-de':
+                mapped_platform = self.check_existing_custom_system(platform_name)
+                
+                if mapped_platform:
+                    print(f"ℹ Using existing custom system for '{platform_name}': {mapped_platform}")
+                elif not self.dry_run:
+                    # Offer to add as custom system
+                    custom_system = self.prompt_add_custom_system(platform_name)
+                    if custom_system:
+                        if self.update_es_systems_xml(custom_system):
+                            mapped_platform = custom_system['name']
+                        else:
+                            print(f"Failed to add custom system. Skipping platform: {platform_name}")
+                            return stats
                     else:
-                        print(f"Failed to add custom system. Skipping platform: {platform_name}")
+                        print(f"Skipping platform: {platform_name}")
                         return stats
                 else:
-                    print(f"Skipping platform: {platform_name}")
+                    self.logger.error(f"No platform mapping for '{platform_name}' in dry-run mode")
+                    print(f"✗ Skipping platform: {platform_name} (no mapping, cannot add in dry-run)")
                     return stats
             else:
                 self.logger.error(f"No platform mapping for '{platform_name}' and cannot add custom system")
