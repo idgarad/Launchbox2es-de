@@ -1048,6 +1048,61 @@ class ArchiveExporter:
         self.platform_games[platform_name] = games
         return games
     
+    def scan_destination_games(self, platform_name: str) -> List[Dict]:
+        """
+        Scan games that exist in the destination directory (for backport-only mode)
+        
+        Args:
+            platform_name: Archive platform name
+            
+        Returns:
+            List of game info dictionaries from destination
+        """
+        # Map platform name
+        mapped_platform = self.map_platform_name(platform_name)
+        if not mapped_platform:
+            self.logger.warning(f"Cannot scan destination for unmapped platform: {platform_name}")
+            return []
+        
+        # Determine destination platform directory
+        roms_base = self.format_config['roms_path']
+        if roms_base:
+            platform_dest = self.destination / roms_base / mapped_platform
+        else:
+            platform_dest = self.destination / mapped_platform
+        
+        if not platform_dest.exists():
+            self.logger.warning(f"Destination directory does not exist: {platform_dest}")
+            return []
+        
+        games = []
+        
+        if self.verbose:
+            self.logger.info(f"  Scanning destination: {platform_dest}")
+        
+        # Scan for game files
+        for item in platform_dest.iterdir():
+            # Skip metadata directories
+            if item.is_dir():
+                continue
+            
+            if item.is_file():
+                game_info = {
+                    'name': item.stem,  # Filename without extension
+                    'filename': item.name,
+                    'path': item,  # Points to destination, not archive
+                    'size': item.stat().st_size,
+                    'extension': item.suffix
+                }
+                games.append(game_info)
+        
+        games.sort(key=lambda x: x['name'].lower())
+        
+        if self.verbose:
+            self.logger.info(f"  ✓ Found {len(games)} games in destination")
+        
+        return games
+    
     def fuzzy_match_games(self, platform_name: str, query: str, threshold: float = 0.6) -> List[Tuple[Dict, float]]:
         """
         Find games matching the query using fuzzy matching
@@ -2636,6 +2691,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--backport-only',
+        action='store_true',
+        help='Only perform backport operation (skip game and metadata export). Useful for refreshing archive after scraping in frontend.'
+    )
+    
+    parser.add_argument(
         '--infoxml',
         metavar='PATH',
         help='Path to XML file with game metadata (e.g., LaunchBox Metadata.xml) to import into gamelist.xml'
@@ -2791,15 +2852,20 @@ Examples:
         print("MASTER ARCHIVE EXPORT TOOL")
         if args.dry_run:
             print("*** DRY RUN MODE - NO FILES WILL BE CREATED ***")
-        if args.backport:
+        if args.backport_only:
+            print("*** BACKPORT-ONLY MODE - SKIP EXPORT, BACKPORT METADATA ONLY ***")
+        elif args.backport:
             print("*** BACKPORT MODE - COPYING METADATA TO ARCHIVE ***")
         print("=" * 70)
         print(f"Format: {exporter.format_config['name']}")
         print(f"Destination: {exporter.destination}")
-        print(f"Mode: {'Symlinks' if args.symlink else 'Copy files'}")
+        if not args.backport_only:
+            print(f"Mode: {'Symlinks' if args.symlink else 'Copy files'}")
         if args.verbose:
             print("Verbose logging: ENABLED")
-        if args.backport:
+        if args.backport_only:
+            print("Backport-only mode: ENABLED (scanning destination, no export)")
+        elif args.backport:
             print("Backport mode: ENABLED (will copy metadata from destination to archive)")
         
         # Select platform(s)
@@ -2835,6 +2901,58 @@ Examples:
         # Load XML metadata if provided
         if args.infoxml:
             exporter.load_xml_metadata(args.infoxml)
+        
+        # Handle backport-only mode
+        if args.backport_only:
+            print("\n→ BACKPORT-ONLY MODE: Scanning destination and backporting metadata...")
+            
+            all_backport_stats = {}
+            
+            for platform in platforms_to_export:
+                print(f"\n{'='*70}")
+                print(f"Platform: {platform}")
+                print(f"{'='*70}")
+                
+                # Scan games from destination directory
+                games_in_dest = exporter.scan_destination_games(platform)
+                
+                if not games_in_dest:
+                    print(f"No games found in destination for {platform}. Skipping.")
+                    continue
+                
+                print(f"Found {len(games_in_dest)} games in destination")
+                
+                # Backport metadata for these games
+                backport_stats = exporter.backport_metadata(platform, games_in_dest)
+                all_backport_stats[platform] = backport_stats
+                
+                if backport_stats['total'] > 0:
+                    print(f"\nMetadata backported to master archive:")
+                    for mtype, count in backport_stats.items():
+                        if count > 0 and mtype != 'total':
+                            print(f"  {mtype}: {count} files")
+                else:
+                    print("  No new metadata found to backport")
+            
+            # Print summary
+            if all_backport_stats:
+                total_backported = sum(stats['total'] for stats in all_backport_stats.values())
+                print(f"\n{'='*70}")
+                print("BACKPORT SUMMARY")
+                print(f"{'='*70}")
+                print(f"Total files backported: {total_backported}")
+                for platform, stats in all_backport_stats.items():
+                    if stats['total'] > 0:
+                        print(f"\n{platform}:")
+                        for mtype, count in stats.items():
+                            if count > 0 and mtype != 'total':
+                                print(f"  {mtype}: {count} files")
+            
+            if args.dry_run:
+                print("\n✓ Backport-only dry run completed!")
+            else:
+                print("\n✓ Backport-only completed successfully!")
+            return 0
         
         # Perform global metadata subdirectory scan before processing any platforms
         # This ensures the user only needs to make one selection for all platforms

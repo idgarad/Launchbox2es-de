@@ -105,6 +105,12 @@ python init.py --platform "nes" --games ALL --infoxml "\\\\192.168.1.3\\Emulator
 # Backport metadata from destination to master archive (builds up archive over time)
 python init.py --platform "nes" --games ALL --backport
 
+# Backport-only mode: Only scan and backport, skip export (fast refresh after scraping)
+python init.py --platform "nes" --backport-only
+
+# Backport all platforms after scraping in frontend
+python init.py --platform ALL --backport-only
+
 # Combine backport with normal export
 python init.py --platform "snes" --games ALL --backport
 ```
@@ -538,21 +544,53 @@ The `--backport` option allows you to **copy metadata from your destination fron
 - **Manual Additions**: You manually added box art/videos to your frontend - copy it to archive
 - **Incremental Building**: Gradually build up archive metadata by scraping different platforms over time
 - **Multiple Frontends**: Collect metadata from multiple frontends into a single archive
+- **Post-Scrape Refresh**: After scraping in a frontend, quickly refresh the archive without re-exporting
 
-### Usage Examples
+### Usage Modes
 
+#### 1. **Backport During Export** (`--backport`)
+Combines normal export with backport - exports games, then backports metadata:
 ```bash
-# Export games and backport any metadata found in ES-DE
+# Export games and backport any metadata found
 python init.py --platform "nes" --games ALL --backport
 
 # Backport without exporting new metadata (if archive already has some)
 python init.py --platform "snes" --games ALL --backport --no-metadata
+```
+
+#### 2. **Backport-Only Mode** (`--backport-only`)
+**Skip export entirely** - only scan destination and backport metadata. Perfect for refreshing after scraping:
+```bash
+# After scraping in ES-DE, quickly backport just that platform
+python init.py --platform "nes" --backport-only
+
+# Backport all platforms after massive scraping session
+python init.py --platform ALL --backport-only
+
+# Preview what would be backported
+python init.py --platform "genesis" --backport-only --dry-run
+```
+
+**When to use `--backport-only`**:
+- ✅ After scraping metadata in ES-DE/RetroArch
+- ✅ When games are already exported, just need to sync metadata
+- ✅ Quick refresh without re-linking/copying ROMs
+- ✅ Faster than full export (skips game export and metadata export)
+
+### Usage Examples
+
+```bash
+# Standard: Export games and backport any metadata found in ES-DE
+python init.py --platform "nes" --games ALL --backport
+
+# Fast: After scraping in ES-DE, backport only
+python init.py --platform "nes" --backport-only
 
 # Dry-run to see what would be backported
 python init.py --platform "genesis" --games ALL --backport --dry-run
 
-# Backport for all platforms
-python init.py --platform ALL --games ALL --backport
+# Backport all platforms (useful after big scraping session)
+python init.py --platform ALL --backport-only
 ```
 
 ### What Gets Backported
@@ -625,12 +663,46 @@ Metadata backported to master archive:
 
 5. **Repeat**: Continue scraping and backporting to build complete archive
 
+### Alternative Workflow (Using --backport-only)
+
+**Scenario**: Games already exported, just refreshing metadata after scraping
+
+1. **Games Already Exported**: You previously ran the export
+   ```bash
+   python init.py --platform "nes" --games ALL
+   # ROMs already in ES-DE
+   ```
+
+2. **Scrape in ES-DE**: Use ES-DE's scraper to download metadata
+
+3. **Quick Backport** (Fast - no re-export):
+   ```bash
+   python init.py --platform "nes" --backport-only
+   # Scans destination, copies new metadata → archive
+   # Much faster than full export!
+   ```
+
+4. **Scrape More Platforms**: Scrape SNES, Genesis, etc. in ES-DE
+
+5. **Batch Backport**:
+   ```bash
+   python init.py --platform ALL --backport-only
+   # Backports all platforms at once
+   ```
+
+**Benefits of `--backport-only`**:
+- ⚡ **Much faster** - skips game export, metadata export
+- 📁 **No disk I/O** for games - only processes metadata
+- 🔄 **Perfect for refreshes** - after scraping sessions
+- 💾 **Safe** - doesn't touch existing game files
+
 ### Notes
 
 - **Metadata Mappings Required**: Only works with configured `metadata_mappings` in fe_formats.json
 - **Path Structure**: Backported files use archive's directory structure
 - **Filename Matching**: Uses game name matching (not ROM filename matching)
 - **Manual Cleanup**: You may want to organize/rename backported files in archive afterwards
+- **Backport-Only Scans Destination**: Reads game list from destination directory, not archive
 
 ## Platform Mapping
 
