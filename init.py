@@ -28,7 +28,8 @@ class ArchiveExporter:
     
     def __init__(self, source_path: str, destination_path: Optional[str], 
                  dest_format: str = 'es-de', config_path: Optional[str] = None,
-                 dry_run: bool = False, verbose: bool = False, use_symlinks: bool = True):
+                 dry_run: bool = False, verbose: bool = False, use_symlinks: bool = True,
+                 backport: bool = False):
         """
         Initialize the archive exporter
         
@@ -40,6 +41,7 @@ class ArchiveExporter:
             dry_run: If True, don't create any symlinks/copies (simulation mode)
             verbose: Enable verbose logging
             use_symlinks: If True, create symlinks; if False, copy files (default: True)
+            backport: If True, copy metadata from destination back to archive if missing
         """
         self.source = Path(source_path)
         self.dest_format = dest_format.lower()
@@ -48,6 +50,7 @@ class ArchiveExporter:
         self.dry_run = dry_run
         self.verbose = verbose
         self.use_symlinks = use_symlinks
+        self.backport = backport
         self.logger = self._setup_logging()
         
         # Load supported formats from JSON file
@@ -1713,6 +1716,151 @@ class ArchiveExporter:
         
         return stats
     
+    def backport_metadata(self, platform_name: str, games: List[Dict]) -> Dict[str, int]:
+        """
+        Copy metadata from destination back to master archive if it's missing in the archive
+        
+        Args:
+            platform_name: Platform name (from master archive)
+            games: List of game info dictionaries
+            
+        Returns:
+            Dictionary with backport statistics
+        """
+        stats = {
+            'images': 0,
+            'videos': 0,
+            'manuals': 0,
+            'music': 0,
+            'total': 0
+        }
+        
+        # Map platform name
+        mapped_platform = self.map_platform_name(platform_name)
+        if not mapped_platform:
+            self.logger.warning(f"Cannot backport for unmapped platform: {platform_name}")
+            return stats
+        
+        # Get metadata mappings from format config
+        metadata_mappings = self.format_config.get('metadata_mappings', {})
+        if not metadata_mappings:
+            self.logger.info("No metadata mappings configured for backport")
+            return stats
+        
+        self.logger.info(f"\n→ Checking for metadata to backport from {self.dest_format} to master archive...")
+        
+        backported_files = []
+        
+        for game in games:
+            game_name = game['name']
+            
+            for archive_path, dest_name in metadata_mappings.items():
+                # Skip if destination is null (not supported)
+                if dest_name is None:
+                    continue
+                
+                # Parse paths
+                path_parts = archive_path.split('/')
+                metadata_type = path_parts[0]
+                
+                # Determine archive metadata path structure
+                if len(path_parts) > 1:
+                    subdir = '/'.join(path_parts[1:])
+                    archive_metadata_dir = self.source / 'Metadata' / metadata_type / platform_name / subdir
+                else:
+                    archive_metadata_dir = self.source / 'Metadata' / metadata_type / platform_name
+                
+                # Parse destination path (e.g., "images/box2dfront")
+                dest_parts = dest_name.split('/')
+                if len(dest_parts) != 2:
+                    continue
+                
+                metadata_subdir = dest_parts[0]
+                dest_prefix = dest_parts[1]
+                
+                # Determine destination metadata file path
+                metadata_base_path = self.format_config.get('metadata_path')
+                
+                if self.format_config.get('rename_metadata_to_match_rom'):
+                    # Metadata uses ROM filename
+                    dest_filename_base = game['filename'].rsplit('.', 1)[0]
+                else:
+                    # Metadata uses game name with prefix
+                    dest_filename_base = f"{game_name}-{dest_prefix}"
+                
+                if metadata_base_path:
+                    # Separate metadata location
+                    metadata_base_expanded = Path(metadata_base_path).expanduser()
+                    dest_metadata_dir = metadata_base_expanded / mapped_platform / metadata_subdir
+                else:
+                    # Metadata in ROM subdirectories
+                    if self.format_config.get('metadata_subdir'):
+                        roms_base = self.format_config['roms_path']
+                        if roms_base:
+                            platform_dest = self.destination / roms_base / mapped_platform
+                        else:
+                            platform_dest = self.destination / mapped_platform
+                        dest_metadata_dir = platform_dest / metadata_subdir
+                    else:
+                        self.logger.debug(f"Unsupported metadata structure for backport")
+                        continue
+                
+                if not dest_metadata_dir.exists():
+                    continue
+                
+                # Look for destination metadata files
+                dest_files = []
+                for dest_file in dest_metadata_dir.iterdir():
+                    if dest_file.is_file() and dest_file.stem == dest_filename_base:
+                        dest_files.append(dest_file)
+                
+                if not dest_files:
+                    continue
+                
+                # Check if archive already has this metadata
+                archive_has_metadata = False
+                if archive_metadata_dir.exists():
+                    for archive_file in archive_metadata_dir.rglob('*'):
+                        if archive_file.is_file() and archive_file.stem.startswith(game_name):
+                            archive_has_metadata = True
+                            break
+                
+                if archive_has_metadata:
+                    # Archive already has this metadata, skip
+                    continue
+                
+                # Backport the metadata file(s)
+                for dest_file in dest_files:
+                    # Create archive directory if needed
+                    if not self.dry_run:
+                        archive_metadata_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Determine archive filename (use game name + original extension)
+                    archive_filename = f"{game_name}{dest_file.suffix}"
+                    archive_dest = archive_metadata_dir / archive_filename
+                    
+                    # Copy file to archive
+                    if self.dry_run:
+                        self.logger.info(f"  [DRY-RUN] Would backport: {dest_file.name} → {archive_dest}")
+                        backported_files.append(archive_filename)
+                    else:
+                        try:
+                            import shutil
+                            shutil.copy2(dest_file, archive_dest)
+                            self.logger.info(f"  ✓ Backported: {archive_filename}")
+                            backported_files.append(archive_filename)
+                            stats[metadata_type.lower()] += 1
+                            stats['total'] += 1
+                        except Exception as e:
+                            self.logger.error(f"  ✗ Failed to backport {dest_file.name}: {e}")
+        
+        if backported_files:
+            self.logger.info(f"\n✓ Backported {len(backported_files)} metadata file(s) to master archive")
+        else:
+            self.logger.info(f"  No new metadata found to backport")
+        
+        return stats
+    
     def _is_video_file(self, file_path: Path) -> bool:
         """
         Check if a file is a video format
@@ -2482,6 +2630,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--backport',
+        action='store_true',
+        help='Copy metadata found in destination back to master archive if missing (builds up archive metadata over time)'
+    )
+    
+    parser.add_argument(
         '--infoxml',
         metavar='PATH',
         help='Path to XML file with game metadata (e.g., LaunchBox Metadata.xml) to import into gamelist.xml'
@@ -2629,19 +2783,24 @@ Examples:
             config_path=args.config,
             dry_run=args.dry_run,
             verbose=args.verbose,
-            use_symlinks=args.symlink
+            use_symlinks=args.symlink,
+            backport=args.backport
         )
         
         print("\n" + "=" * 70)
         print("MASTER ARCHIVE EXPORT TOOL")
         if args.dry_run:
             print("*** DRY RUN MODE - NO FILES WILL BE CREATED ***")
+        if args.backport:
+            print("*** BACKPORT MODE - COPYING METADATA TO ARCHIVE ***")
         print("=" * 70)
         print(f"Format: {exporter.format_config['name']}")
         print(f"Destination: {exporter.destination}")
         print(f"Mode: {'Symlinks' if args.symlink else 'Copy files'}")
         if args.verbose:
             print("Verbose logging: ENABLED")
+        if args.backport:
+            print("Backport mode: ENABLED (will copy metadata from destination to archive)")
         
         # Select platform(s)
         platforms_to_export = []
@@ -2722,6 +2881,15 @@ Examples:
                 for mtype, count in metadata_stats.items():
                     if count > 0 and mtype != 'total':
                         print(f"  {mtype}: {count} files")
+            
+            # Backport metadata from destination to archive if requested
+            if args.backport and stats['games_for_metadata']:
+                backport_stats = exporter.backport_metadata(platform, stats['games_for_metadata'])
+                if backport_stats['total'] > 0:
+                    print(f"\nMetadata backported to master archive:")
+                    for mtype, count in backport_stats.items():
+                        if count > 0 and mtype != 'total':
+                            print(f"  {mtype}: {count} files")
             
             # Export gamelist.xml if format supports it
             # Will create basic gamelist (path/name) even without XML metadata

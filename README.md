@@ -20,12 +20,14 @@ This project was developed through an AI-human collaboration, combining domain e
 - **Fuzzy Matching**: Find platforms and games by partial name
 - **Symlink or Copy**: Choose to create symlinks (saves space) or copy files (portable)
 - **Smart Metadata Export**: Automatically checks and exports missing metadata even for games that already exist
+- **Metadata Backporting**: Copy metadata from destination back to master archive to build up collection over time
 - **Dry-run Mode**: Preview what would be exported without creating files
 - **Progress Indicators**: Shows real-time progress during long operations with periodic status updates
 - **Verbose Logging**: Detailed task-by-task logging with full paths and operation status for troubleshooting
 - **Format Defaults**: Each frontend has its own default installation path
 - **Path Validation**: Automatically validates and creates required directories with detailed error messages
 - **RetroArch Playlist Generation**: Automatically creates and populates .lpl playlist files for unknown platforms
+- **XML Metadata Import**: Import metadata from LaunchBox XML and generate gamelist.xml files
 
 ## Requirements
 
@@ -99,6 +101,12 @@ python init.py --symlink false --dry-run --platform ALL --games ALL
 
 # Import game metadata from XML and generate gamelist.xml files
 python init.py --platform "nes" --games ALL --infoxml "\\\\192.168.1.3\\Emulators\\Master Archive\\Metadata.xml"
+
+# Backport metadata from destination to master archive (builds up archive over time)
+python init.py --platform "nes" --games ALL --backport
+
+# Combine backport with normal export
+python init.py --platform "snes" --games ALL --backport
 ```
 
 ### Platform Selection Options
@@ -512,6 +520,117 @@ Then use it with:
 ```bash
 python init.py --format retrobat --platform "nes" --games ALL
 ```
+
+## Metadata Backporting (--backport)
+
+The `--backport` option allows you to **copy metadata from your destination frontend back to the master archive** when the archive is missing that metadata. This helps you build up your master archive's metadata collection over time by preserving scraped/downloaded metadata.
+
+### How It Works
+
+1. **Export Games**: Games are exported from archive to destination (as normal)
+2. **Export Metadata**: Metadata from archive is exported to destination (if available)
+3. **Check Destination**: Tool scans destination for metadata files
+4. **Backport Missing**: Any metadata found in destination that's missing in archive is **copied back to the archive**
+
+### Use Cases
+
+- **Scraped Metadata**: You scraped metadata in ES-DE/RetroArch - copy it back to preserve it
+- **Manual Additions**: You manually added box art/videos to your frontend - copy it to archive
+- **Incremental Building**: Gradually build up archive metadata by scraping different platforms over time
+- **Multiple Frontends**: Collect metadata from multiple frontends into a single archive
+
+### Usage Examples
+
+```bash
+# Export games and backport any metadata found in ES-DE
+python init.py --platform "nes" --games ALL --backport
+
+# Backport without exporting new metadata (if archive already has some)
+python init.py --platform "snes" --games ALL --backport --no-metadata
+
+# Dry-run to see what would be backported
+python init.py --platform "genesis" --games ALL --backport --dry-run
+
+# Backport for all platforms
+python init.py --platform ALL --games ALL --backport
+```
+
+### What Gets Backported
+
+The tool checks each metadata mapping configured for your format:
+
+| Metadata Type | Example Destination | Example Archive Location |
+|---------------|---------------------|--------------------------|
+| Box Art | `~/ES-DE/downloaded_media/nes/images/Super Mario Bros.png` | `Archive/Metadata/Images/Box - Front/nes/Super Mario Bros.png` |
+| Screenshots | `~/ES-DE/downloaded_media/nes/images/Super Mario Bros-screenshot.png` | `Archive/Metadata/Images/Screenshot - Gameplay/nes/Super Mario Bros.png` |
+| Videos | `~/ES-DE/downloaded_media/nes/videos/Super Mario Bros.mp4` | `Archive/Metadata/Videos/nes/Super Mario Bros.mp4` |
+| Manuals | `~/ES-DE/downloaded_media/nes/manuals/Super Mario Bros.pdf` | `Archive/Metadata/Manuals/nes/Super Mario Bros.pdf` |
+
+### Backport Logic
+
+For each game, the tool:
+1. Checks if destination has metadata for that game
+2. Checks if archive already has metadata for that game
+3. If destination has it but archive doesn't → **Copy to archive**
+4. If archive already has it → **Skip** (no overwrite)
+
+### Safety Features
+
+- **No Overwriting**: Never overwrites existing metadata in archive
+- **Copy Only**: Uses `shutil.copy2` to preserve file timestamps
+- **Dry-Run Support**: Preview what would be backported with `--dry-run`
+- **Per-Game Checking**: Only backports for games that were actually exported
+- **Directory Creation**: Automatically creates archive subdirectories as needed
+
+### Example Output
+
+```
+→ Checking for metadata to backport from es-de to master archive...
+  ✓ Backported: Super Mario Bros.png
+  ✓ Backported: Super Mario Bros.mp4
+  ✓ Backported: Legend of Zelda.png
+  
+✓ Backported 3 metadata file(s) to master archive
+
+Metadata backported to master archive:
+  images: 2 files
+  videos: 1 files
+```
+
+### Workflow Example
+
+**Scenario**: You have a bare archive with just ROMs, want to build up metadata
+
+1. **Initial Export**:
+   ```bash
+   python init.py --platform "nes" --games ALL
+   # Exports ROMs, but no metadata yet
+   ```
+
+2. **Scrape in ES-DE**: 
+   - Launch ES-DE
+   - Use built-in scraper to download box art, screenshots, videos
+
+3. **Backport to Archive**:
+   ```bash
+   python init.py --platform "nes" --games ALL --backport
+   # Copies all scraped metadata back to archive
+   ```
+
+4. **Export Another Platform**:
+   ```bash
+   python init.py --platform "snes" --games ALL
+   # New platform exports with NES metadata already in archive
+   ```
+
+5. **Repeat**: Continue scraping and backporting to build complete archive
+
+### Notes
+
+- **Metadata Mappings Required**: Only works with configured `metadata_mappings` in fe_formats.json
+- **Path Structure**: Backported files use archive's directory structure
+- **Filename Matching**: Uses game name matching (not ROM filename matching)
+- **Manual Cleanup**: You may want to organize/rename backported files in archive afterwards
 
 ## Platform Mapping
 
