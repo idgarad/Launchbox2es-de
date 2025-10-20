@@ -88,6 +88,7 @@ class ArchiveExporter:
         self.platform_games = {}
         self.unmapped_platforms = []  # Track platforms without mappings
         self.auto_select_metadata = False  # Flag for auto-selecting first metadata file
+        self.metadata_subdir_cache = {}  # Cache subdirectory selections per archive_path
         
         # Validate paths
         self._validate_paths()
@@ -1260,8 +1261,17 @@ class ArchiveExporter:
                         unmapped_dirs.add(archive_path)
                     continue
                 
+                # Check for subdirectories (e.g., regional variants like Europe, North America)
+                # or architectural variants (Cocktail, Upright)
+                subdirs_available = self._get_metadata_subdirectories(metadata_base)
+                selected_subdirs = None
+                
+                if subdirs_available:
+                    # Prompt user to select which subdirectories to use
+                    selected_subdirs = self._select_metadata_subdirectories(subdirs_available, archive_path)
+                
                 # Find matching files for this game (with video filtering for Videos type)
-                matching_files = self._find_metadata_files(metadata_base, game_name, metadata_type)
+                matching_files = self._find_metadata_files(metadata_base, game_name, metadata_type, selected_subdirs)
                 
                 if not matching_files:
                     continue
@@ -1283,8 +1293,22 @@ class ArchiveExporter:
                     continue
                 
                 # Build destination path
-                # ES-DE format: [platform]/images/[gamename]-[type].ext
-                dest_filename = f"{game_name}-{dest_name}{selected_file.suffix}"
+                # Parse the destination name which now includes subdirectory
+                # e.g., "images/box2dfront" or "videos/video"
+                if '/' in dest_name:
+                    # New format: "subdir/prefix"
+                    dest_parts = dest_name.split('/')
+                    metadata_subdir = dest_parts[0]
+                    filename_prefix = dest_parts[1]
+                else:
+                    # Legacy format: just "prefix" - fall back to metadata_subdirs or lowercase
+                    metadata_subdirs = self.format_config.get('metadata_subdirs', {})
+                    metadata_subdir = metadata_subdirs.get(metadata_type, metadata_type.lower())
+                    filename_prefix = dest_name
+                
+                # Format: [platform]/[subdir]/[gamename]-[prefix].ext
+                # e.g., nes/images/mario-box2dfront.png or nes/videos/mario-video.mp4
+                dest_filename = f"{game_name}-{filename_prefix}{selected_file.suffix}"
                 
                 # Check if there's a custom metadata path (e.g., for AppImage/Flatpak)
                 metadata_base_path = self.format_config.get('metadata_path')
@@ -1292,17 +1316,17 @@ class ArchiveExporter:
                 if metadata_base_path:
                     # Use custom metadata path (e.g., ~/ES-DE/downloaded_media)
                     metadata_base_expanded = Path(metadata_base_path).expanduser()
-                    dest_path = metadata_base_expanded / mapped_platform / 'images' / dest_filename
+                    dest_path = metadata_base_expanded / mapped_platform / metadata_subdir / dest_filename
                 elif self.format_config['metadata_subdir']:
                     # Metadata within ROM directory
                     roms_base = self.format_config.get('roms_path', '')
                     if roms_base:
-                        dest_path = self.destination / roms_base / mapped_platform / 'images' / dest_filename
+                        dest_path = self.destination / roms_base / mapped_platform / metadata_subdir / dest_filename
                     else:
-                        dest_path = self.destination / mapped_platform / 'images' / dest_filename
+                        dest_path = self.destination / mapped_platform / metadata_subdir / dest_filename
                 else:
                     # Separate metadata structure
-                    dest_path = self.destination / 'metadata' / mapped_platform / 'images' / dest_filename
+                    dest_path = self.destination / 'metadata' / mapped_platform / metadata_subdir / dest_filename
                 
                 # Create symlink/copy
                 if self.create_symlink(selected_file, dest_path, force):
@@ -1348,7 +1372,90 @@ class ArchiveExporter:
         
         return file_path.suffix.lower() in video_extensions
     
-    def _find_metadata_files(self, base_path: Path, game_name: str, metadata_type: str = None) -> List[Path]:
+    def _get_metadata_subdirectories(self, base_path: Path) -> List[str]:
+        """
+        Get list of subdirectories under a metadata path
+        
+        Args:
+            base_path: Base metadata directory to check
+            
+        Returns:
+            List of subdirectory names
+        """
+        subdirs = []
+        
+        if not base_path.exists():
+            return subdirs
+        
+        for item in base_path.iterdir():
+            if item.is_dir():
+                subdirs.append(item.name)
+        
+        return sorted(subdirs)
+    
+    def _select_metadata_subdirectories(self, subdirs: List[str], archive_path: str) -> List[str]:
+        """
+        Let user select which subdirectories to search for metadata
+        
+        Args:
+            subdirs: List of available subdirectories
+            archive_path: Archive metadata path (for display)
+            
+        Returns:
+            List of selected subdirectory names (empty list means search base directory only)
+        """
+        # Check cache first
+        if archive_path in self.metadata_subdir_cache:
+            return self.metadata_subdir_cache[archive_path]
+        
+        if not subdirs or self.dry_run or self.auto_select_metadata:
+            # In dry-run or auto-select mode, use all subdirectories
+            self.metadata_subdir_cache[archive_path] = subdirs
+            return subdirs
+        
+        print(f"\n{'='*70}")
+        print(f"SUBDIRECTORIES FOUND: {archive_path}")
+        print(f"{'='*70}")
+        print(f"Found {len(subdirs)} subdirectory(ies):")
+        for i, subdir in enumerate(subdirs, 1):
+            print(f"  {i}. {subdir}")
+        
+        print(f"\nOptions:")
+        print(f"  Enter numbers (comma-separated) to select specific subdirectories")
+        print(f"  a - Select all subdirectories")
+        print(f"  n - Skip subdirectories (search base directory only)")
+        print(f"{'='*70}")
+        
+        while True:
+            choice = input(f"\nSelect subdirectories [1-{len(subdirs)}/a/n]: ").strip().lower()
+            
+            if choice == 'a':
+                print(f"✓ Selected all {len(subdirs)} subdirectories")
+                self.metadata_subdir_cache[archive_path] = subdirs
+                return subdirs
+            elif choice == 'n':
+                print(f"✓ Will search base directory only")
+                self.metadata_subdir_cache[archive_path] = []
+                return []
+            elif choice:
+                try:
+                    # Parse comma-separated numbers
+                    selected_indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                    selected = [subdirs[i] for i in selected_indices if 0 <= i < len(subdirs)]
+                    
+                    if selected:
+                        print(f"✓ Selected {len(selected)} subdirectory(ies): {', '.join(selected)}")
+                        self.metadata_subdir_cache[archive_path] = selected
+                        return selected
+                    else:
+                        print("Invalid selection. Please try again.")
+                except (ValueError, IndexError):
+                    print("Invalid input. Please enter numbers separated by commas, or 'a' for all, 'n' for none.")
+            else:
+                print("Please make a selection.")
+    
+    def _find_metadata_files(self, base_path: Path, game_name: str, metadata_type: str = None, 
+                            subdirs: List[str] = None) -> List[Path]:
         """
         Find metadata files matching the game name
         
@@ -1356,6 +1463,7 @@ class ArchiveExporter:
             base_path: Base directory to search
             game_name: Game name to match
             metadata_type: Type of metadata (e.g., "Videos") for format filtering
+            subdirs: Optional list of subdirectories to search within base_path
             
         Returns:
             List of matching file paths
@@ -1365,21 +1473,34 @@ class ArchiveExporter:
         if not base_path.exists():
             return matching_files
         
-        # Search for files in this directory (not recursive for mapped dirs)
-        for file_path in base_path.iterdir():
-            if file_path.is_file():
-                # Check if filename starts with game name
-                if file_path.stem.startswith(game_name):
-                    # For Videos metadata, only include actual video files
-                    if metadata_type == "Videos":
-                        if self._is_video_file(file_path):
-                            matching_files.append(file_path)
+        # Determine which directories to search
+        search_paths = []
+        if subdirs:
+            # Search specified subdirectories
+            for subdir in subdirs:
+                subdir_path = base_path / subdir
+                if subdir_path.exists() and subdir_path.is_dir():
+                    search_paths.append(subdir_path)
+        else:
+            # Search base directory only
+            search_paths.append(base_path)
+        
+        # Search for files in the determined paths
+        for search_path in search_paths:
+            for file_path in search_path.iterdir():
+                if file_path.is_file():
+                    # Check if filename starts with game name
+                    if file_path.stem.startswith(game_name):
+                        # For Videos metadata, only include actual video files
+                        if metadata_type == "Videos":
+                            if self._is_video_file(file_path):
+                                matching_files.append(file_path)
+                            else:
+                                self.logger.debug(
+                                    f"Skipping non-video file in Videos directory: {file_path.name}"
+                                )
                         else:
-                            self.logger.debug(
-                                f"Skipping non-video file in Videos directory: {file_path.name}"
-                            )
-                    else:
-                        matching_files.append(file_path)
+                            matching_files.append(file_path)
         
         return matching_files
     

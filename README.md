@@ -181,7 +181,37 @@ The `metadata_mappings` field controls which metadata from the Master Archive ge
   - This ensures any new or missing metadata is exported even if the game ROM was previously exported
   - Existing metadata files are not overwritten unless `--force` is used
 
-### Metadata Selection Interactive Mode
+### Metadata Subdirectory Selection
+
+When the script encounters subdirectories within a metadata path (e.g., regional variants like "Europe"/"North America" or architectural variants like "Cocktail"/"Upright"), you'll be prompted to select which ones to use:
+
+```
+======================================================================
+SUBDIRECTORIES FOUND: Images/Arcade - Marquee
+======================================================================
+Found 3 subdirectory(ies):
+  1. Cocktail
+  2. Europe
+  3. North America
+
+Options:
+  Enter numbers (comma-separated) to select specific subdirectories
+  a - Select all subdirectories
+  n - Skip subdirectories (search base directory only)
+======================================================================
+
+Select subdirectories [1-3/a/n]: 2,3
+✓ Selected 2 subdirectory(ies): Europe, North America
+```
+
+- **Comma-separated numbers**: Select specific subdirectories (e.g., `2,3` for Europe and North America)
+- **a**: Select all subdirectories (search all variants)
+- **n**: Skip subdirectories (search only the base directory)
+- **Selection is cached**: You'll only be prompted once per metadata type during the session
+
+After selecting subdirectories, if multiple files are found across the selected subdirectories, you'll be prompted to choose which specific file to use.
+
+### Metadata File Selection Interactive Mode
 
 When multiple metadata files exist for a game:
 

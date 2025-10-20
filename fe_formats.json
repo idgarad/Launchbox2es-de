@@ -10,16 +10,16 @@
       "platforms_subdir": true,
       "custom_systems_path": "~/ES-DE/custom_systems/es_systems.xml",
       "metadata_mappings": {
-        "Images/Box - Front": "box2dfront",
-        "Images/Box - Back": "box2dback",
-        "Images/Box - 3D": "box3d",
-        "Images/Screenshot - Gameplay": "screenshot",
-        "Images/Screenshot - Game Title": "titlescreen",
-        "Images/Fanart - Background": "fanart",
-        "Images/Banner": "marquee",
-        "Images/Arcade - Marquee": "marquee",
-        "Images/Cart - Front": "cover",
-        "Images/Clear Logo": "wheel",
+        "Images/Box - Front": "images/box2dfront",
+        "Images/Box - Back": "images/box2dback",
+        "Images/Box - 3D": "images/box3d",
+        "Images/Screenshot - Gameplay": "images/screenshot",
+        "Images/Screenshot - Game Title": "images/titlescreen",
+        "Images/Fanart - Background": "images/fanart",
+        "Images/Banner": "images/marquee",
+        "Images/Arcade - Marquee": "images/marquee",
+        "Images/Cart - Front": "images/cover",
+        "Images/Clear Logo": "images/wheel",
         "Videos": "video",
         "Manuals": "manual",
         "Music": null
@@ -144,7 +144,7 @@
       "description": "Brief description of the format",
       "custom_systems_path": "Path to custom systems configuration file for adding new platforms",
       "platform_mappings": "Map from Master Archive platform names to frontend directory names",
-      "metadata_mappings": "Map from Master Archive metadata paths to frontend metadata names. Use 'Images/[subdirectory]' format for image types. Set to null to skip that metadata type."
+      "metadata_mappings": "Map from Master Archive metadata paths to frontend metadata paths. Format: 'Archive/Path': 'dest_subdir/filename_prefix'. The destination path includes both the subdirectory (images/, videos/, manuals/) and the filename prefix (box2dfront, video, manual). Set to null to skip that metadata type."
     },
     "future_formats": {
       "retrobat": {
