@@ -137,6 +137,7 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
 - **name**: Display name shown to users
 - **default_destination**: Default installation path (~ expands to home)
 - **roms_path**: Subdirectory name for ROMs within destination
+- **metadata_path**: Optional override path for metadata location (e.g., `~/ES-DE/downloaded_media` for AppImage/Flatpak). If `null`, metadata is stored relative to `default_destination` based on `metadata_subdir` setting.
 - **metadata_subdir**: `true` = metadata in ROM folders, `false` = separate structure
 - **platforms_subdir**: `true` = ROMs organized by platform subdirectories
 - **description**: Brief description of the format
@@ -435,6 +436,28 @@ python init.py --dest /custom/path --verbose --platform "nes" --games ALL
 - Format defaults make it easy to export to standard locations
 - The `fe_formats.json` file can be extended with new frontend formats
 - Use `--verbose` to see full file paths during symlink/copy operations (helpful for debugging)
+
+### ES-DE AppImage/Flatpak Metadata Location
+
+If you're using ES-DE as an AppImage or Flatpak, metadata may be stored in a different location than the default. To configure this:
+
+1. Edit `fe_formats.json` and set the `metadata_path` field:
+   ```json
+   {
+     "formats": {
+       "es-de": {
+         "metadata_path": "~/ES-DE/downloaded_media",
+         ...
+       }
+     }
+   }
+   ```
+
+2. Common metadata locations:
+   - **Default**: Metadata stored in `~/ROMs/[platform]/images/`
+   - **AppImage/Flatpak**: Metadata may be in `~/ES-DE/downloaded_media/[platform]/images/`
+   
+3. The script will log the metadata path being used during initialization
 
 ## Path Validation and Error Handling
 

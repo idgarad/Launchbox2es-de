@@ -77,6 +77,12 @@ class ArchiveExporter:
         
         self.logger.info(f"Destination format: {self.format_config['name']}")
         
+        # Check if custom metadata path is configured
+        metadata_path = self.format_config.get('metadata_path')
+        if metadata_path:
+            metadata_path_expanded = Path(metadata_path).expanduser()
+            self.logger.info(f"Using custom metadata path: {metadata_path_expanded}")
+        
         # Cache for scanned data
         self.available_platforms = {}
         self.platform_games = {}
@@ -1277,7 +1283,14 @@ class ArchiveExporter:
                 # ES-DE format: [platform]/images/[gamename]-[type].ext
                 dest_filename = f"{game_name}-{dest_name}{selected_file.suffix}"
                 
-                if self.format_config['metadata_subdir']:
+                # Check if there's a custom metadata path (e.g., for AppImage/Flatpak)
+                metadata_base_path = self.format_config.get('metadata_path')
+                
+                if metadata_base_path:
+                    # Use custom metadata path (e.g., ~/ES-DE/downloaded_media)
+                    metadata_base_expanded = Path(metadata_base_path).expanduser()
+                    dest_path = metadata_base_expanded / mapped_platform / 'images' / dest_filename
+                elif self.format_config['metadata_subdir']:
                     # Metadata within ROM directory
                     roms_base = self.format_config.get('roms_path', '')
                     if roms_base:
