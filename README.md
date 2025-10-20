@@ -146,6 +146,7 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
 - **custom_systems_path**: Path to custom systems XML file (for adding unmapped platforms)
 - **platform_mappings**: Dictionary mapping Master Archive platform names to destination directory names
 - **metadata_mappings**: Dictionary mapping Master Archive metadata paths to destination metadata names (see below)
+- **rename_metadata_to_match_rom**: `true` = metadata files use ROM filename (ES-DE requirement), `false` = use game name with prefix
 
 ### Metadata Mappings
 
@@ -181,6 +182,32 @@ The `metadata_mappings` field controls which metadata from the Master Archive ge
 - **Metadata is checked for all games**, including those that already exist in the destination
   - This ensures any new or missing metadata is exported even if the game ROM was previously exported
   - Existing metadata files are not overwritten unless `--force` is used
+
+### Metadata Filename Matching
+
+The `rename_metadata_to_match_rom` configuration option controls how metadata files are named:
+
+**When `true` (ES-DE requirement)**:
+- Metadata files are renamed to match the ROM filename exactly (excluding extension)
+- Example: ROM file `Super Mario Bros.nes` → metadata files:
+  - `Super Mario Bros.png` (box art image)
+  - `Super Mario Bros.mp4` (video)
+  - `Super Mario Bros.pdf` (manual)
+- **Required for ES-DE**: ES-DE matches metadata to ROMs by filename
+- Subdirectory structure is maintained (e.g., `images/`, `videos/`, `manuals/`)
+
+**When `false` (legacy format)**:
+- Metadata files use game name with metadata type prefix
+- Example: ROM file `Super Mario Bros.nes` → metadata files:
+  - `Super Mario Bros-box2dfront.png` (box art image)
+  - `Super Mario Bros-video.mp4` (video)
+  - `Super Mario Bros-manual.pdf` (manual)
+- Used by formats that support multiple files per metadata type
+
+**Configuration**:
+```json
+"rename_metadata_to_match_rom": true  // ES-DE style filename matching
+```
 
 ### Metadata Subdirectory Selection
 

@@ -1370,9 +1370,21 @@ class ArchiveExporter:
                     metadata_subdir = metadata_subdirs.get(metadata_type, metadata_type.lower())
                     filename_prefix = dest_name
                 
-                # Format: [platform]/[subdir]/[gamename]-[prefix].ext
-                # e.g., nes/images/mario-box2dfront.png or nes/videos/mario-video.mp4
-                dest_filename = f"{game_name}-{filename_prefix}{selected_file.suffix}"
+                # Check if metadata should be renamed to match ROM filename
+                rename_to_match = self.format_config.get('rename_metadata_to_match_rom', False)
+                
+                if rename_to_match:
+                    # ES-DE style: Use ROM filename with metadata file extension
+                    # e.g., "Super Mario Bros.nes" -> "Super Mario Bros.png"
+                    rom_filename = game.get('filename', game_name)  # Get actual ROM filename
+                    rom_name_without_ext = Path(rom_filename).stem  # Remove ROM extension
+                    dest_filename = f"{rom_name_without_ext}{selected_file.suffix}"
+                    if self.verbose:
+                        self.logger.info(f"    → Renaming to match ROM: {rom_filename} -> {dest_filename}")
+                else:
+                    # Legacy style: [gamename]-[prefix].ext
+                    # e.g., "mario-box2dfront.png" or "mario-video.mp4"
+                    dest_filename = f"{game_name}-{filename_prefix}{selected_file.suffix}"
                 
                 # Check if there's a custom metadata path (e.g., for AppImage/Flatpak)
                 metadata_base_path = self.format_config.get('metadata_path')

@@ -6,6 +6,7 @@
       "roms_path": "ROMs",
       "metadata_path": "~/ES-DE/downloaded_media",
       "metadata_subdir": true,
+      "rename_metadata_to_match_rom": true,
       "description": "EmulationStation Desktop Edition format",
       "platforms_subdir": true,
       "custom_systems_path": "~/ES-DE/custom_systems/es_systems.xml",
@@ -20,8 +21,8 @@
         "Images/Arcade - Marquee": "images/marquee",
         "Images/Cart - Front": "images/cover",
         "Images/Clear Logo": "images/wheel",
-        "Videos": "video",
-        "Manuals": "manual",
+        "Videos": "/video",
+        "Manuals": "/manual",
         "Music": null
       },
       "platform_mappings": {
@@ -140,6 +141,7 @@
       "roms_path": "Subdirectory name for ROMs within the destination",
       "metadata_path": "Optional override path for metadata location (e.g., '~/ES-DE/downloaded_media' for AppImage/Flatpak). If null, metadata is stored relative to default_destination based on metadata_subdir setting.",
       "metadata_subdir": "Whether metadata goes in subdirectories within ROM folders (true) or separate structure (false)",
+      "rename_metadata_to_match_rom": "If true, metadata files are renamed to match the ROM filename (e.g., 'mario.nes' -> 'mario.png' for images). If false, metadata files use format-specific naming like 'mario-box2dfront.png'. ES-DE requires this to be true.",
       "platforms_subdir": "Whether ROMs are organized by platform subdirectories",
       "description": "Brief description of the format",
       "custom_systems_path": "Path to custom systems configuration file for adding new platforms",
