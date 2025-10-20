@@ -10,6 +10,31 @@
       "description": "EmulationStation Desktop Edition format",
       "platforms_subdir": true,
       "custom_systems_path": "~/ES-DE/custom_systems/es_systems.xml",
+      "gamelist_path": "~/ES-DE/gamelists",
+      "xml_metadata_mappings": {
+        "Name": "name",
+        "ReleaseYear": "releasedate",
+        "Overview": "desc",
+        "Developer": "developer",
+        "Publisher": "publisher",
+        "Genres": "genre",
+        "MaxPlayers": "players",
+        "CommunityRating": "rating"
+      },
+      "xml_field_conversions": {
+        "ReleaseYear": {
+          "type": "date",
+          "format": "{year}0101T000000",
+          "description": "Convert year (1985) to ES-DE date format (19850101T000000)"
+        },
+        "CommunityRating": {
+          "type": "normalize",
+          "source_scale": 5.0,
+          "target_scale": 1.0,
+          "decimal_places": 2,
+          "description": "Convert 5-star rating to 0-1 scale (4.8/5 -> 0.96)"
+        }
+      },
       "metadata_mappings": {
         "Images/Box - Front": "images/box2dfront",
         "Images/Box - Back": "images/box2dback",
@@ -145,6 +170,9 @@
       "platforms_subdir": "Whether ROMs are organized by platform subdirectories",
       "description": "Brief description of the format",
       "custom_systems_path": "Path to custom systems configuration file for adding new platforms",
+      "gamelist_path": "Path to gamelist XML files directory (e.g., '~/ES-DE/gamelists'). Each platform gets its own subdirectory with a gamelist.xml file.",
+      "xml_metadata_mappings": "Map from source XML fields to destination gamelist.xml fields. Format: 'SourceField': 'destfield'. Only mapped fields are renamed; unmapped fields pass through as-is. Used with --infoxml option.",
+      "xml_field_conversions": "Define data type and format conversions for XML fields. Supports 'date' (format strings with {year}, {month}, {day}) and 'normalize' (scale conversions with source_scale, target_scale, decimal_places). Conversions are applied before writing to gamelist.xml.",
       "platform_mappings": "Map from Master Archive platform names to frontend directory names",
       "metadata_mappings": "Map from Master Archive metadata paths to frontend metadata paths. Format: 'Archive/Path': 'dest_subdir/filename_prefix'. The destination path includes both the subdirectory (images/, videos/, manuals/) and the filename prefix (box2dfront, video, manual). Set to null to skip that metadata type."
     },

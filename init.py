@@ -92,6 +92,9 @@ class ArchiveExporter:
         self.global_metadata_subdirs = None  # Global list of selected subdirectories for all platforms
         self.metadata_subdirs_scanned = False  # Flag to track if we've done the global scan
         
+        # XML metadata support
+        self.xml_metadata = {}  # Cache for parsed XML metadata {platform: {game_name: metadata_dict}}
+        
         # Validate paths
         self._validate_paths()
         
@@ -1764,6 +1767,231 @@ class ArchiveExporter:
             
             print("Invalid choice. Please try again.")
     
+    def load_xml_metadata(self, xml_path: str) -> None:
+        """
+        Load game metadata from XML file (e.g., LaunchBox Metadata.xml)
+        
+        Args:
+            xml_path: Path to the XML metadata file
+        """
+        xml_file = Path(xml_path).expanduser()
+        
+        if not xml_file.exists():
+            self.logger.error(f"XML metadata file not found: {xml_file}")
+            return
+        
+        self.logger.info(f"Loading XML metadata from: {xml_file}")
+        
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            
+            # Parse games from XML
+            games_parsed = 0
+            for game_elem in root.findall('.//Game'):
+                # Extract game data
+                game_data = {}
+                for child in game_elem:
+                    game_data[child.tag] = child.text if child.text else ""
+                
+                # Get platform and game name
+                platform = game_data.get('Platform', '')
+                name = game_data.get('Name', '')
+                
+                if not platform or not name:
+                    continue
+                
+                # Initialize platform dict if needed
+                if platform not in self.xml_metadata:
+                    self.xml_metadata[platform] = {}
+                
+                # Store game metadata
+                self.xml_metadata[platform][name] = game_data
+                games_parsed += 1
+            
+            self.logger.info(f"✓ Loaded metadata for {games_parsed} games across {len(self.xml_metadata)} platforms")
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing XML metadata: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+    
+    def export_gamelist_xml(self, platform_name: str, games: List[Dict]) -> bool:
+        """
+        Export gamelist.xml file for a platform with game metadata
+        
+        Args:
+            platform_name: Platform name (from master archive)
+            games: List of game info dictionaries
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Check if format supports gamelist XML
+        gamelist_path = self.format_config.get('gamelist_path')
+        xml_mappings = self.format_config.get('xml_metadata_mappings', {})
+        xml_conversions = self.format_config.get('xml_field_conversions', {})
+        
+        if not gamelist_path:
+            self.logger.debug(f"Format {self.dest_format} does not support gamelist XML")
+            return False
+        
+        # Check if we have XML metadata loaded
+        if not self.xml_metadata:
+            self.logger.debug("No XML metadata loaded")
+            return False
+        
+        # Map platform name
+        mapped_platform = self.map_platform_name(platform_name)
+        if not mapped_platform:
+            return False
+        
+        # Check if we have metadata for this platform
+        if platform_name not in self.xml_metadata:
+            self.logger.debug(f"No XML metadata found for platform: {platform_name}")
+            return False
+        
+        platform_metadata = self.xml_metadata[platform_name]
+        
+        # Build gamelist XML path
+        gamelist_base = Path(gamelist_path).expanduser()
+        gamelist_dir = gamelist_base / mapped_platform
+        gamelist_file = gamelist_dir / 'gamelist.xml'
+        
+        if self.dry_run:
+            self.logger.info(f"[DRY RUN] Would create gamelist.xml at: {gamelist_file}")
+            return True
+        
+        try:
+            # Create directory if needed
+            gamelist_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Build XML structure
+            import xml.etree.ElementTree as ET
+            from xml.dom import minidom
+            
+            root = ET.Element('gameList')
+            
+            games_added = 0
+            for game in games:
+                game_name = game['name']
+                
+                # Check if we have metadata for this game
+                if game_name not in platform_metadata:
+                    continue
+                
+                source_data = platform_metadata[game_name]
+                
+                # Create game element
+                game_elem = ET.SubElement(root, 'game')
+                
+                # Add path element (relative to ROM directory)
+                path_elem = ET.SubElement(game_elem, 'path')
+                path_elem.text = f"./{game['filename']}"
+                
+                # Process all fields from source XML
+                for source_field, source_value in source_data.items():
+                    if not source_value:
+                        continue
+                    
+                    # Skip Platform field (it's the container, not game-specific metadata)
+                    if source_field == 'Platform':
+                        continue
+                    
+                    # Determine destination field name (mapped or pass-through)
+                    dest_field = xml_mappings.get(source_field, source_field.lower())
+                    
+                    # Apply conversions if configured
+                    converted_value = self._apply_xml_field_conversion(
+                        source_field, 
+                        source_value, 
+                        xml_conversions
+                    )
+                    
+                    if converted_value:
+                        field_elem = ET.SubElement(game_elem, dest_field)
+                        field_elem.text = str(converted_value)
+                
+                games_added += 1
+            
+            if games_added == 0:
+                self.logger.info(f"No matching metadata found for any games in {platform_name}")
+                return False
+            
+            # Write XML file with pretty formatting
+            xml_string = ET.tostring(root, encoding='unicode')
+            dom = minidom.parseString(xml_string)
+            pretty_xml = dom.toprettyxml(indent='  ')
+            
+            # Remove extra blank lines
+            pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') if line.strip()])
+            
+            with open(gamelist_file, 'w', encoding='utf-8') as f:
+                f.write(pretty_xml)
+            
+            self.logger.info(f"✓ Created gamelist.xml for {platform_name} with {games_added} games")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error creating gamelist.xml for {platform_name}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def _apply_xml_field_conversion(self, field_name: str, value: str, conversions: Dict) -> str:
+        """
+        Apply configured conversions to XML field values
+        
+        Args:
+            field_name: Name of the source field
+            value: Original value from source XML
+            conversions: Dictionary of conversion configurations
+            
+        Returns:
+            Converted value as string
+        """
+        if field_name not in conversions:
+            return value
+        
+        conversion = conversions[field_name]
+        conversion_type = conversion.get('type')
+        
+        try:
+            if conversion_type == 'date':
+                # Date format conversion (e.g., year to full date)
+                format_str = conversion.get('format', '{year}')
+                
+                # Extract year, month, day if present in value
+                year = value.strip()
+                month = conversion.get('default_month', '01')
+                day = conversion.get('default_day', '01')
+                
+                # Format the output
+                result = format_str.format(year=year, month=month, day=day)
+                return result
+                
+            elif conversion_type == 'normalize':
+                # Normalize numeric values (e.g., rating scales)
+                source_scale = float(conversion.get('source_scale', 1.0))
+                target_scale = float(conversion.get('target_scale', 1.0))
+                decimal_places = int(conversion.get('decimal_places', 2))
+                
+                # Convert value
+                numeric_value = float(value)
+                normalized = (numeric_value / source_scale) * target_scale
+                
+                # Format with specified decimal places
+                return f"{normalized:.{decimal_places}f}"
+                
+            else:
+                # Unknown conversion type, return original
+                return value
+                
+        except Exception as e:
+            self.logger.warning(f"Error converting field {field_name}: {e}, using original value")
+            return value
+    
     def generate_report(self, platform_stats: Dict[str, Dict]) -> str:
         """
         Generate a summary report of the export
@@ -1956,6 +2184,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--infoxml',
+        metavar='PATH',
+        help='Path to XML file with game metadata (e.g., LaunchBox Metadata.xml) to import into gamelist.xml'
+    )
+    
+    parser.add_argument(
         '--metadata-types',
         nargs='+',
         choices=['Images', 'Videos', 'Manuals', 'Music'],
@@ -2141,6 +2375,10 @@ Examples:
                 print("No platform selected. Exiting.")
                 return 0
         
+        # Load XML metadata if provided
+        if args.infoxml:
+            exporter.load_xml_metadata(args.infoxml)
+        
         # Perform global metadata subdirectory scan before processing any platforms
         # This ensures the user only needs to make one selection for all platforms
         if platforms_to_export and not args.no_metadata:
@@ -2186,6 +2424,11 @@ Examples:
                 for mtype, count in metadata_stats.items():
                     if count > 0 and mtype != 'total':
                         print(f"  {mtype}: {count} files")
+            
+            # Export gamelist.xml if XML metadata was provided
+            if args.infoxml and stats['games_for_metadata']:
+                print(f"\n→ Generating gamelist.xml for {platform}...")
+                exporter.export_gamelist_xml(platform, stats['games_for_metadata'])
         
         # Generate and print report
         if all_platform_stats:

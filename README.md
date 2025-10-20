@@ -1,6 +1,8 @@
 # Master Archive Export Tool
 
-Export games and metadata from a master archive (NFS mount) to various emulation frontend destinations using symlinks.
+Export games and metadata from a master archive (NFS mount) to various emulation frontend destinations using symlinks. This tool was designed
+to reduce the amount of metadata scraping needed by importing any existing metdadata first. Structured from Launchbox's inital data structure
+from which the master archive was built.
 
 ## Credits
 
@@ -93,6 +95,9 @@ python init.py --symlink false --platform "nes" --games ALL
 
 # Dry run with copy mode to see actual disk space needed
 python init.py --symlink false --dry-run --platform ALL --games ALL
+
+# Import game metadata from XML and generate gamelist.xml files
+python init.py --platform "nes" --games ALL --infoxml "\\\\192.168.1.3\\Emulators\\Master Archive\\Metadata.xml"
 ```
 
 ### Platform Selection Options
@@ -162,6 +167,8 @@ To add support for a new frontend/emulator, edit `fe_formats.json`:
 - **platforms_subdir**: `true` = ROMs organized by platform subdirectories
 - **description**: Brief description of the format
 - **custom_systems_path**: Path to custom systems XML file (for adding unmapped platforms)
+- **gamelist_path**: Path to gamelist XML directory (e.g., `"~/ES-DE/gamelists"`). Used with `--infoxml` to generate gamelist.xml files per platform.
+- **xml_metadata_mappings**: Dictionary mapping source XML fields to destination gamelist.xml fields. Used with `--infoxml` option (see XML Metadata Import section).
 - **platform_mappings**: Dictionary mapping Master Archive platform names to destination directory names
 - **metadata_mappings**: Dictionary mapping Master Archive metadata paths to destination paths with format `"subdirectory/prefix"` (see below)
 
@@ -330,6 +337,150 @@ Select file [1-4/s/a]:
 - Select a number to choose that specific file
 - Press `s` to skip this metadata for this game
 - Press `a` to automatically use the first file for all remaining conflicts
+
+## XML Metadata Import (--infoxml)
+
+The `--infoxml` option allows you to import game metadata from an XML file (such as LaunchBox's Metadata.xml) and automatically generate `gamelist.xml` files for supported frontends like ES-DE.
+
+### How It Works
+
+1. **Load XML**: The script parses your source XML file and indexes all game metadata by platform and game name
+2. **Match Games**: During export, it matches your exported games with the XML metadata
+3. **Generate Gamelist**: Creates properly formatted `gamelist.xml` files for each platform
+
+### Usage Example
+
+```bash
+# Export games and generate gamelist.xml from LaunchBox metadata
+python init.py --platform "nes" --games ALL --infoxml "\\192.168.1.3\Emulators\Master Archive\Metadata.xml"
+
+# Works with all export modes
+python init.py --platform ALL --games ALL --infoxml "/path/to/Metadata.xml"
+```
+
+### XML Source Format
+
+The script expects XML in LaunchBox format:
+
+```xml
+<?xml version="1.0" standalone="yes"?>
+<LaunchBox>
+  <Game>
+    <Name>Super Mario Bros.</Name>
+    <ReleaseYear>1985</ReleaseYear>
+    <Overview>Game description here...</Overview>
+    <MaxPlayers>2</MaxPlayers>
+    <Developer>Nintendo</Developer>
+    <Publisher>Nintendo</Publisher>
+    <Genres>Platform</Genres>
+    <CommunityRating>4.8</CommunityRating>
+    <Platform>Nintendo Entertainment System</Platform>
+    <ESRB>E - Everyone</ESRB>
+    <VideoURL>https://youtube.com/watch?v=...</VideoURL>
+  </Game>
+  <!-- More games... -->
+</LaunchBox>
+```
+
+### ES-DE Gamelist Output
+
+The script generates ES-DE compatible `gamelist.xml` files at:
+- Location: `~/ES-DE/gamelists/[platform]/gamelist.xml`
+- Format: ES-DE gamelist.xml specification
+
+**Example output**:
+```xml
+<?xml version="1.0"?>
+<gameList>
+  <game>
+    <path>./Super Mario Bros.nes</path>
+    <name>Super Mario Bros.</name>
+    <releasedate>19850101T000000</releasedate>
+    <desc>Game description here...</desc>
+    <developer>Nintendo</developer>
+    <publisher>Nintendo</publisher>
+    <genre>Platform</genre>
+    <players>2</players>
+    <rating>0.96</rating>
+  </game>
+</gameList>
+```
+
+### Field Mappings and Pass-Through
+
+The `xml_metadata_mappings` in `fe_formats.json` defines how to rename fields from the source XML to the destination format. **Unmapped fields are automatically passed through with their original names** (converted to lowercase), which is safe since ES-DE and most XML parsers quietly ignore unknown fields.
+
+```json
+"xml_metadata_mappings": {
+  "Name": "name",
+  "ReleaseYear": "releasedate",
+  "Overview": "desc",
+  "Developer": "developer",
+  "Publisher": "publisher",
+  "Genres": "genre",
+  "MaxPlayers": "players",
+  "CommunityRating": "rating"
+}
+```
+
+**How it works**:
+- **Mapped Fields**: Renamed to destination format (e.g., `Overview` → `desc`)
+- **Unmapped Fields**: Passed through with lowercase names (e.g., `VideoURL` → `videourl`, `ESRB` → `esrb`)
+- **Result**: All metadata from source XML is preserved in the gamelist, even if not explicitly mapped
+
+### Format Conversions
+
+The `xml_field_conversions` in `fe_formats.json` defines how to convert data types and formats for specific fields:
+
+```json
+"xml_field_conversions": {
+  "ReleaseYear": {
+    "type": "date",
+    "format": "{year}0101T000000",
+    "description": "Convert year (1985) to ES-DE date format (19850101T000000)"
+  },
+  "CommunityRating": {
+    "type": "normalize",
+    "source_scale": 5.0,
+    "target_scale": 1.0,
+    "decimal_places": 2,
+    "description": "Convert 5-star rating to 0-1 scale (4.8/5 -> 0.96)"
+  }
+}
+```
+
+**Supported Conversion Types**:
+
+**1. Date Conversion** (`type: "date"`):
+- Converts dates between different formats
+- Format string supports: `{year}`, `{month}`, `{day}`
+- Example: `"{year}0101T000000"` converts year `1985` to `19850101T000000`
+- Can specify `default_month` and `default_day` if not in source
+
+**2. Normalize Conversion** (`type: "normalize"`):
+- Scales numeric values between different ranges
+- `source_scale`: Original maximum value (e.g., 5.0 for 5-star ratings)
+- `target_scale`: Desired maximum value (e.g., 1.0 for 0-1 scale)
+- `decimal_places`: Number of decimal places in output
+- Example: `4.8` on 5-star scale → `0.96` on 0-1 scale
+
+**Adding Conversions for Other Formats**:
+Different frontends may need different formats. For example, if RetroBat uses ISO dates:
+```json
+"ReleaseYear": {
+  "type": "date",
+  "format": "{year}-01-01",
+  "description": "Convert to ISO date format (1985-01-01)"
+}
+```
+
+### Notes
+
+- **Game Matching**: Games matched by exact name between XML and your archive
+- **Export Required**: Only successfully exported games appear in gamelist.xml
+- **Pass-Through Safety**: Unmapped fields preserved automatically; parsers ignore unknown tags
+- **Backup Recommended**: Existing gamelist.xml files are overwritten
+- **Dry-Run Preview**: Use `--dry-run` to test without creating files
 
 ### Example: Adding RetroBat Support
 
