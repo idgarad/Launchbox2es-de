@@ -12,7 +12,8 @@ Export games and metadata from a master archive (NFS mount) to various emulation
 - **Symlink or Copy**: Choose to create symlinks (saves space) or copy files (portable)
 - **Smart Metadata Export**: Automatically checks and exports missing metadata even for games that already exist
 - **Dry-run Mode**: Preview what would be exported without creating files
-- **Verbose Logging**: Detailed logging for troubleshooting
+- **Progress Indicators**: Shows real-time progress during long operations with periodic status updates
+- **Verbose Logging**: Detailed task-by-task logging with full paths and operation status for troubleshooting
 - **Format Defaults**: Each frontend has its own default installation path
 - **Path Validation**: Automatically validates and creates required directories with detailed error messages
 
@@ -469,7 +470,47 @@ python init.py --dest /custom/path --verbose --platform "nes" --games ALL
 - Fuzzy matching helps find platforms/games without exact names
 - Format defaults make it easy to export to standard locations
 - The `fe_formats.json` file can be extended with new frontend formats
-- Use `--verbose` to see full file paths during symlink/copy operations (helpful for debugging)
+
+### Progress Indicators and Verbose Mode
+
+The script provides feedback during long operations to show that it's actively working:
+
+**Normal Mode** (default):
+- Shows periodic progress updates every 10 games during metadata processing
+- Example: `→ Processing game 50/200...`
+- Minimal console output focused on results
+
+**Verbose Mode** (`--verbose` or `-v`):
+- Shows detailed task-by-task progress with full paths
+- Displays what the script is doing at each step
+- Shows file counts during scanning (every 100 items)
+- Displays full source and destination paths
+- Logs subdirectory discovery and selection
+- Shows file matching and selection process
+- Indicates success/failure for each operation
+
+**Example verbose output:**
+```
+[Game 15/50] Super Mario Bros
+======================================================================
+  Checking: Images/Box - Front
+    → Source: /mnt/archive/Metadata/Images/NES/Box - Front
+    → Checking for subdirectories...
+    → Found 2 subdirectory(ies)
+    → Searching for files matching: Super Mario Bros...
+    ✓ Found 1 matching file(s)
+    → Using: Super Mario Bros.png
+    → Building destination path...
+    → Destination: ~/ES-DE/downloaded_media/nes/images/Super Mario Bros-box2dfront.png
+    → Creating symlink...
+    ✓ Success
+```
+
+**When to use verbose mode:**
+- Troubleshooting issues (missing files, incorrect paths)
+- Understanding what the script is doing
+- Verifying correct source/destination mapping
+- Debugging slow operations
 
 ### ES-DE AppImage/Flatpak Metadata Location
 

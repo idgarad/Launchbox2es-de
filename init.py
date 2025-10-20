@@ -769,13 +769,25 @@ class ArchiveExporter:
         if platform_name in self.platform_games:
             return self.platform_games[platform_name]
         
+        if self.verbose:
+            self.logger.info(f"Scanning games in platform: {platform_name}")
+        
         platform_path = self.source / 'Games' / platform_name
         if not platform_path.exists():
             self.logger.error(f"Platform directory not found: {platform_path}")
             return []
         
         games = []
-        for item in platform_path.iterdir():
+        file_count = 0
+        
+        # Count files first for progress
+        all_items = list(platform_path.iterdir())
+        total_items = len(all_items)
+        
+        for idx, item in enumerate(all_items, 1):
+            if self.verbose and idx % 100 == 0:
+                self.logger.info(f"  Scanned {idx}/{total_items} items...")
+            
             if item.is_file():
                 game_info = {
                     'name': item.stem,  # Filename without extension
@@ -787,7 +799,12 @@ class ArchiveExporter:
                 games.append(game_info)
         
         # Sort by name
+        if self.verbose:
+            self.logger.info(f"  Sorting {len(games)} games...")
         games.sort(key=lambda x: x['name'].lower())
+        
+        if self.verbose:
+            self.logger.info(f"  ✓ Found {len(games)} games in {platform_name}")
         
         self.platform_games[platform_name] = games
         return games
@@ -1143,7 +1160,11 @@ class ArchiveExporter:
         dry_run_prefix = "[DRY RUN] " if self.dry_run else ""
         self.logger.info(f"\n{dry_run_prefix}Exporting {len(games)} games for {platform_name}...")
         
-        for game in games:
+        for idx, game in enumerate(games, 1):
+            # Show progress indicator
+            if self.verbose:
+                self.logger.info(f"[{idx}/{len(games)}] Processing: {game['name']}")
+            
             source_path = game['path']
             dest_path = platform_dest / game['filename']
             
@@ -1232,14 +1253,30 @@ class ArchiveExporter:
         # Track unmapped directories we encounter
         unmapped_dirs = set()
         
-        for game in games:
+        # Progress tracking
+        total_mappings = len([m for m in metadata_mappings.items() if m[1] is not None])
+        current_mapping = 0
+        
+        for game_idx, game in enumerate(games, 1):
             game_name = game['name']
+            
+            # Show game progress
+            if self.verbose:
+                self.logger.info(f"\n{'='*70}")
+                self.logger.info(f"[Game {game_idx}/{len(games)}] {game_name}")
+                self.logger.info(f"{'='*70}")
+            elif game_idx % 10 == 0 or game_idx == len(games):
+                # Show periodic progress for non-verbose mode
+                print(f"  → Processing game {game_idx}/{len(games)}...", end='\r')
             
             # Process each metadata mapping
             for archive_path, dest_name in metadata_mappings.items():
                 # Skip if destination is null (explicitly not supported)
                 if dest_name is None:
                     continue
+                
+                if self.verbose:
+                    self.logger.info(f"  Checking: {archive_path}")
                 
                 # Parse archive path (e.g., "Images/Box - Front" or "Videos")
                 path_parts = archive_path.split('/')
@@ -1254,33 +1291,55 @@ class ArchiveExporter:
                     # No subdirectory (e.g., Videos, Manuals)
                     metadata_base = self.source / 'Metadata' / metadata_type / platform_name
                 
+                if self.verbose:
+                    self.logger.info(f"    → Source: {metadata_base}")
+                
                 # Check if this metadata directory exists
                 if not metadata_base.exists():
                     if archive_path not in unmapped_dirs:
                         self.logger.debug(f"Metadata directory not found: {metadata_base}")
                         unmapped_dirs.add(archive_path)
+                    if self.verbose:
+                        self.logger.info(f"    ✗ Directory not found")
                     continue
                 
                 # Check for subdirectories (e.g., regional variants like Europe, North America)
                 # or architectural variants (Cocktail, Upright)
+                if self.verbose:
+                    self.logger.info(f"    → Checking for subdirectories...")
+                
                 subdirs_available = self._get_metadata_subdirectories(metadata_base)
                 selected_subdirs = None
                 
                 if subdirs_available:
+                    if self.verbose:
+                        self.logger.info(f"    → Found {len(subdirs_available)} subdirectory(ies)")
                     # Prompt user to select which subdirectories to use
                     selected_subdirs = self._select_metadata_subdirectories(subdirs_available, archive_path)
+                
+                if self.verbose:
+                    self.logger.info(f"    → Searching for files matching: {game_name}...")
                 
                 # Find matching files for this game (with video filtering for Videos type)
                 matching_files = self._find_metadata_files(metadata_base, game_name, metadata_type, selected_subdirs)
                 
                 if not matching_files:
+                    if self.verbose:
+                        self.logger.info(f"    ✗ No matching files found")
                     continue
+                
+                if self.verbose:
+                    self.logger.info(f"    ✓ Found {len(matching_files)} matching file(s)")
                 
                 # If multiple files found, let user choose (unless in non-interactive mode)
                 selected_file = None
                 if len(matching_files) == 1:
                     selected_file = matching_files[0]
+                    if self.verbose:
+                        self.logger.info(f"    → Using: {selected_file.name}")
                 else:
+                    if self.verbose:
+                        self.logger.info(f"    → Multiple files found, prompting user...")
                     # Multiple files - need to choose one
                     selected_file = self._select_metadata_file(
                         matching_files, 
@@ -1290,7 +1349,12 @@ class ArchiveExporter:
                     )
                 
                 if not selected_file:
+                    if self.verbose:
+                        self.logger.info(f"    ✗ No file selected (skipped)")
                     continue
+                
+                if self.verbose:
+                    self.logger.info(f"    → Building destination path...")
                 
                 # Build destination path
                 # Parse the destination name which now includes subdirectory
@@ -1328,10 +1392,22 @@ class ArchiveExporter:
                     # Separate metadata structure
                     dest_path = self.destination / 'metadata' / mapped_platform / metadata_subdir / dest_filename
                 
+                if self.verbose:
+                    self.logger.info(f"    → Destination: {dest_path}")
+                    self.logger.info(f"    → Creating {'symlink' if self.use_symlinks else 'copy'}...")
+                
                 # Create symlink/copy
                 if self.create_symlink(selected_file, dest_path, force):
                     stats[metadata_type.lower()] += 1
                     stats['total'] += 1
+                    if self.verbose:
+                        self.logger.info(f"    ✓ Success")
+                elif self.verbose:
+                    self.logger.info(f"    ⊘ Skipped (already exists or failed)")
+        
+        # Clear progress line
+        if not self.verbose:
+            print(" " * 80, end='\r')  # Clear the progress line
         
         # Report any unmapped directories we found
         if unmapped_dirs:
