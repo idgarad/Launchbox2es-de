@@ -2,7 +2,7 @@
   "formats": {
     "es-de": {
       "name": "ES-DE (EmulationStation Desktop Edition)",
-      "default_destination": "~/.emulationstation/ROMs",
+      "default_destination": "~/",
       "roms_path": "ROMs",
       "metadata_subdir": true,
       "description": "EmulationStation Desktop Edition format",
