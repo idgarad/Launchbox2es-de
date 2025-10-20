@@ -215,14 +215,19 @@ class ArchiveExporter:
         mapped_name = self.platform_mappings.get(archive_platform_name)
         
         if not mapped_name:
-            # Check if it exists as a custom system before warning
+            # Check if it exists as a custom system/playlist before warning
             if self.dest_format == 'es-de':
                 existing_system = self.check_existing_custom_system(archive_platform_name)
                 if existing_system:
                     # Platform exists as custom system, no warning needed
                     return existing_system
+            elif self.dest_format == 'retroarch':
+                existing_playlist = self.check_existing_retroarch_playlist(archive_platform_name)
+                if existing_playlist:
+                    # Platform exists as custom playlist, no warning needed
+                    return existing_playlist
             
-            # Only warn if it's not a custom system
+            # Only warn if it's not a custom system/playlist
             self.logger.warning(f"No platform mapping found for: {archive_platform_name}")
             if archive_platform_name not in self.unmapped_platforms:
                 self.unmapped_platforms.append(archive_platform_name)
@@ -440,6 +445,232 @@ class ArchiveExporter:
             
         except Exception as e:
             self.logger.error(f"Error updating custom systems XML: {e}")
+            return False
+    
+    def check_existing_retroarch_playlist(self, archive_platform_name: str) -> Optional[str]:
+        """
+        Check if a RetroArch playlist already exists for this platform
+        
+        Args:
+            archive_platform_name: Platform name from master archive
+            
+        Returns:
+            Playlist name if found, None otherwise
+        """
+        if not self.custom_systems_path or self.dest_format != 'retroarch':
+            return None
+        
+        playlists_dir = Path(self.custom_systems_path).expanduser()
+        
+        if not playlists_dir.exists():
+            return None
+        
+        try:
+            # Look for .lpl files that might match
+            for playlist_file in playlists_dir.glob('*.lpl'):
+                playlist_name = playlist_file.stem
+                
+                # Check if the playlist name matches the archive platform name
+                if playlist_name.lower() == archive_platform_name.lower().replace(' ', '_'):
+                    self.logger.info(
+                        f"Found existing RetroArch playlist for '{archive_platform_name}': {playlist_name}"
+                    )
+                    # Add to platform mappings for this session
+                    self.platform_mappings[archive_platform_name] = playlist_name
+                    return playlist_name
+            
+        except Exception as e:
+            self.logger.warning(f"Error checking existing RetroArch playlists: {e}")
+        
+        return None
+    
+    def prompt_add_retroarch_playlist(self, archive_platform_name: str) -> Optional[Dict]:
+        """
+        Prompt user to add a RetroArch playlist for an unmapped platform
+        
+        Args:
+            archive_platform_name: Platform name from master archive
+            
+        Returns:
+            Dictionary with playlist information, or None if skipped
+        """
+        print(f"\n{'='*70}")
+        print(f"UNMAPPED PLATFORM: {archive_platform_name}")
+        print(f"{'='*70}")
+        print(f"This platform is not mapped in the RetroArch configuration.")
+        print(f"You can add it as a custom playlist.")
+        print()
+        
+        choice = input("Create RetroArch playlist? (y/n): ").strip().lower()
+        
+        if choice not in ['y', 'yes']:
+            print("Skipping platform.")
+            return None
+        
+        # Gather playlist information
+        print("\nEnter playlist information (press Enter for default):")
+        
+        # Suggest a playlist name based on archive name
+        default_name = archive_platform_name.replace(' ', '_')
+        playlist_name = input(f"Playlist name [{default_name}]: ").strip() or default_name
+        
+        full_name = input(f"Display name [{archive_platform_name}]: ").strip() or archive_platform_name
+        
+        # Suggest a default core
+        print("\nRetroArch core (leave empty if unknown):")
+        print("  Common cores: mame_libretro, nestopia_libretro, snes9x_libretro, etc.")
+        default_core = input("Core name: ").strip()
+        
+        return {
+            'name': playlist_name,
+            'fullname': full_name,
+            'default_core': default_core if default_core else 'DETECT',
+            'archive_name': archive_platform_name
+        }
+    
+    def update_retroarch_playlist(self, playlist_info: Dict) -> bool:
+        """
+        Create or update a RetroArch playlist (.lpl file)
+        
+        Args:
+            playlist_info: Dictionary with playlist information
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.custom_systems_path:
+            self.logger.error("No playlists path configured for RetroArch")
+            return False
+        
+        playlists_dir = Path(self.custom_systems_path).expanduser()
+        
+        # Create the playlists directory if it doesn't exist
+        playlists_dir.mkdir(parents=True, exist_ok=True)
+        
+        playlist_file = playlists_dir / f"{playlist_info['name']}.lpl"
+        
+        try:
+            import json
+            
+            # Check if playlist already exists
+            if playlist_file.exists():
+                self.logger.warning(f"Playlist '{playlist_info['name']}' already exists")
+                # Add to platform mappings for this session
+                self.platform_mappings[playlist_info['archive_name']] = playlist_info['name']
+                print(f"ℹ Playlist '{playlist_info['name']}.lpl' already exists, will add games to it")
+                return True
+            
+            # Create new empty playlist
+            # RetroArch playlists are JSON files with a specific structure
+            playlist_data = {
+                "version": "1.5",
+                "default_core_path": "",
+                "default_core_name": playlist_info.get('default_core', 'DETECT'),
+                "label_display_mode": 0,
+                "right_thumbnail_mode": 0,
+                "left_thumbnail_mode": 0,
+                "sort_mode": 0,
+                "items": []
+            }
+            
+            # Show preview
+            print(f"\n{'='*70}")
+            print("RETROARCH PLAYLIST TO BE CREATED:")
+            print(f"{'='*70}")
+            print(f"File: {playlist_file}")
+            print(f"Display Name: {playlist_info['fullname']}")
+            print(f"Default Core: {playlist_info.get('default_core', 'DETECT')}")
+            print(f"{'='*70}")
+            
+            if self.dry_run:
+                print(f"\nDRY-RUN: Would create playlist at {playlist_file}")
+            else:
+                print(f"\nTarget file: {playlist_file}")
+            
+            # Write playlist (unless dry-run)
+            if not self.dry_run:
+                with open(playlist_file, 'w', encoding='utf-8') as f:
+                    json.dump(playlist_data, f, indent=2)
+                
+                self.logger.info(f"Created RetroArch playlist: {playlist_file}")
+                print(f"\n✓ Successfully created playlist '{playlist_info['fullname']}'")
+                print(f"  Playlist file: {playlist_file}")
+                print(f"  Games will be added to this playlist during export")
+            else:
+                print(f"\n[DRY-RUN] Would create playlist '{playlist_info['fullname']}'")
+                print(f"  Playlist file would be: {playlist_file}")
+            
+            # Add to platform mappings for this session
+            self.platform_mappings[playlist_info['archive_name']] = playlist_info['name']
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error creating RetroArch playlist: {e}")
+            return False
+    
+    def add_game_to_retroarch_playlist(self, platform_name: str, game: Dict, rom_path: Path) -> bool:
+        """
+        Add a game entry to a RetroArch playlist
+        
+        Args:
+            platform_name: Mapped platform/playlist name
+            game: Game info dictionary
+            rom_path: Full path to the ROM file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.custom_systems_path or self.dest_format != 'retroarch':
+            return False
+        
+        playlists_dir = Path(self.custom_systems_path).expanduser()
+        playlist_file = playlists_dir / f"{platform_name}.lpl"
+        
+        if not playlist_file.exists():
+            self.logger.warning(f"Playlist file does not exist: {playlist_file}")
+            return False
+        
+        try:
+            import json
+            
+            # Load existing playlist
+            with open(playlist_file, 'r', encoding='utf-8') as f:
+                playlist_data = json.load(f)
+            
+            # Check if game already exists in playlist
+            rom_path_str = str(rom_path.resolve())
+            for item in playlist_data.get('items', []):
+                if item.get('path') == rom_path_str:
+                    # Game already in playlist
+                    return True
+            
+            # Create game entry
+            # RetroArch playlist item structure
+            game_entry = {
+                "path": rom_path_str,
+                "label": game['name'],
+                "core_path": "DETECT",
+                "core_name": "DETECT",
+                "crc32": "00000000|crc",
+                "db_name": f"{platform_name}.lpl"
+            }
+            
+            # Add to playlist
+            if 'items' not in playlist_data:
+                playlist_data['items'] = []
+            
+            playlist_data['items'].append(game_entry)
+            
+            # Write updated playlist
+            if not self.dry_run:
+                with open(playlist_file, 'w', encoding='utf-8') as f:
+                    json.dump(playlist_data, f, indent=2)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error adding game to RetroArch playlist: {e}")
             return False
     
     def _validate_paths(self):
@@ -1126,7 +1357,7 @@ class ArchiveExporter:
         mapped_platform = self.map_platform_name(platform_name)
         
         if not mapped_platform:
-            # Check if it already exists as a custom system from a previous run
+            # Check if it already exists as a custom system/playlist from a previous run
             if self.dest_format == 'es-de':
                 mapped_platform = self.check_existing_custom_system(platform_name)
                 
@@ -1148,8 +1379,31 @@ class ArchiveExporter:
                     self.logger.error(f"No platform mapping for '{platform_name}' in dry-run mode")
                     print(f"✗ Skipping platform: {platform_name} (no mapping, cannot add in dry-run)")
                     return stats
+                    
+            elif self.dest_format == 'retroarch':
+                mapped_platform = self.check_existing_retroarch_playlist(platform_name)
+                
+                if mapped_platform:
+                    print(f"ℹ Using existing RetroArch playlist for '{platform_name}': {mapped_platform}")
+                elif not self.dry_run:
+                    # Offer to add as custom playlist
+                    playlist_info = self.prompt_add_retroarch_playlist(platform_name)
+                    if playlist_info:
+                        if self.update_retroarch_playlist(playlist_info):
+                            mapped_platform = playlist_info['name']
+                        else:
+                            print(f"Failed to create playlist. Skipping platform: {platform_name}")
+                            return stats
+                    else:
+                        print(f"Skipping platform: {platform_name}")
+                        return stats
+                else:
+                    self.logger.error(f"No platform mapping for '{platform_name}' in dry-run mode")
+                    print(f"✗ Skipping platform: {platform_name} (no mapping, cannot add in dry-run)")
+                    return stats
+                    
             else:
-                self.logger.error(f"No platform mapping for '{platform_name}' and cannot add custom system")
+                self.logger.error(f"No platform mapping for '{platform_name}' and format does not support custom systems/playlists")
                 print(f"✗ Skipping platform: {platform_name} (no mapping)")
                 return stats
         
@@ -1177,10 +1431,20 @@ class ArchiveExporter:
                 stats['success'] += 1
                 stats['total_size'] += game['size']
                 stats['games_for_metadata'].append(game)  # Track for metadata export
+                
+                # Add to RetroArch playlist if applicable
+                if self.dest_format == 'retroarch' and not self.dry_run:
+                    self.add_game_to_retroarch_playlist(mapped_platform, game, dest_path)
+                
                 print(f"  ✓ {game['name']}")
             elif dest_path.exists() and not self.dry_run:
                 stats['skipped'] += 1
                 stats['games_for_metadata'].append(game)  # Also check metadata for existing games
+                
+                # Add to RetroArch playlist if applicable (even if game already exists)
+                if self.dest_format == 'retroarch':
+                    self.add_game_to_retroarch_playlist(mapped_platform, game, dest_path)
+                
                 print(f"  ⊘ {game['name']} (already exists)")
             else:
                 stats['failed'] += 1
@@ -1837,30 +2101,29 @@ class ArchiveExporter:
             self.logger.info(f"✗ Format {self.dest_format} does not support gamelist XML (no gamelist_path configured)")
             return False
         
-        # Check if we have XML metadata loaded
-        if not self.xml_metadata:
-            self.logger.warning("✗ No XML metadata loaded - use --infoxml to provide metadata file")
-            return False
-        
-        # Map platform name
+        # Map platform name for directory structure
         mapped_platform = self.map_platform_name(platform_name)
         if not mapped_platform:
             self.logger.warning(f"✗ Could not map platform name: {platform_name}")
             return False
         
-        # Check if we have metadata for this platform
-        if platform_name not in self.xml_metadata:
-            # Try to show available platforms for debugging
-            available = list(self.xml_metadata.keys())[:5]
-            self.logger.warning(f"✗ No XML metadata found for platform: '{platform_name}'")
-            if available:
-                self.logger.info(f"  Available platforms in XML: {', '.join(available)}{'...' if len(self.xml_metadata) > 5 else ''}")
-            return False
+        # Look for metadata using the original archive platform name
+        # The XML metadata uses the original LaunchBox/archive platform names
+        platform_metadata = {}
+        has_xml_metadata = False
         
-        platform_metadata = self.xml_metadata[platform_name]
+        if self.xml_metadata and platform_name in self.xml_metadata:
+            platform_metadata = self.xml_metadata[platform_name]
+            has_xml_metadata = True
+            if self.verbose:
+                self.logger.info(f"  Found {len(platform_metadata)} games in XML metadata for {platform_name}")
+        else:
+            # No XML metadata for this platform - will create basic gamelist with just path and name
+            if self.xml_metadata:
+                self.logger.info(f"  No XML metadata found for platform '{platform_name}' - creating basic gamelist")
+            else:
+                self.logger.info(f"  No XML metadata loaded - creating basic gamelist with path and name only")
         
-        if self.verbose:
-            self.logger.info(f"  Found {len(platform_metadata)} games in XML metadata for {platform_name}")
         
         # Build gamelist XML path
         gamelist_base = Path(gamelist_path).expanduser()
@@ -1872,8 +2135,11 @@ class ArchiveExporter:
         
         if self.dry_run:
             self.logger.info(f"[DRY RUN] Would create gamelist.xml at: {gamelist_file}")
-            matched = sum(1 for g in games if g['name'] in platform_metadata)
-            self.logger.info(f"[DRY RUN] Would include {matched}/{len(games)} games with metadata")
+            if has_xml_metadata:
+                matched = sum(1 for g in games if g['name'] in platform_metadata)
+                self.logger.info(f"[DRY RUN] Would include {len(games)} games ({matched} with metadata, {len(games)-matched} basic entries)")
+            else:
+                self.logger.info(f"[DRY RUN] Would include {len(games)} games with basic entries (path and name only)")
             return True
         
         try:
@@ -1889,62 +2155,62 @@ class ArchiveExporter:
             
             root = ET.Element('gameList')
             
-            games_added = 0
-            games_skipped = 0
+            games_with_metadata = 0
+            games_basic_only = 0
+            
             for game in games:
                 game_name = game['name']
                 
-                # Check if we have metadata for this game
-                if game_name not in platform_metadata:
-                    games_skipped += 1
-                    if self.verbose:
-                        self.logger.debug(f"  No metadata for game: {game_name}")
-                    continue
-                
-                source_data = platform_metadata[game_name]
-                
-                # Create game element
+                # Create game element (always create, even without metadata)
                 game_elem = ET.SubElement(root, 'game')
                 
-                # Add path element (relative to ROM directory)
+                # Always add path element (relative to ROM directory)
                 path_elem = ET.SubElement(game_elem, 'path')
                 path_elem.text = f"./{game['filename']}"
                 
-                # Process all fields from source XML
-                for source_field, source_value in source_data.items():
-                    if not source_value:
-                        continue
-                    
-                    # Skip Platform field (it's the container, not game-specific metadata)
-                    if source_field == 'Platform':
-                        continue
-                    
-                    # Determine destination field name (mapped or pass-through)
-                    dest_field = xml_mappings.get(source_field, source_field.lower())
-                    
-                    # Apply conversions if configured
-                    converted_value = self._apply_xml_field_conversion(
-                        source_field, 
-                        source_value, 
-                        xml_conversions
-                    )
-                    
-                    if converted_value:
-                        field_elem = ET.SubElement(game_elem, dest_field)
-                        field_elem.text = str(converted_value)
+                # Always add name element
+                name_elem = ET.SubElement(game_elem, 'name')
+                name_elem.text = game_name
                 
-                games_added += 1
+                # Check if we have additional metadata for this game
+                if has_xml_metadata and game_name in platform_metadata:
+                    source_data = platform_metadata[game_name]
+                    
+                    # Process all fields from source XML (except Name and Platform which we already handled)
+                    for source_field, source_value in source_data.items():
+                        if not source_value:
+                            continue
+                        
+                        # Skip fields we've already handled or don't want
+                        if source_field in ['Name', 'Platform']:
+                            continue
+                        
+                        # Determine destination field name (mapped or pass-through)
+                        dest_field = xml_mappings.get(source_field, source_field.lower())
+                        
+                        # Skip if it would duplicate the name field
+                        if dest_field == 'name':
+                            continue
+                        
+                        # Apply conversions if configured
+                        converted_value = self._apply_xml_field_conversion(
+                            source_field, 
+                            source_value, 
+                            xml_conversions
+                        )
+                        
+                        if converted_value:
+                            field_elem = ET.SubElement(game_elem, dest_field)
+                            field_elem.text = str(converted_value)
+                    
+                    games_with_metadata += 1
+                else:
+                    games_basic_only += 1
             
-            if games_added == 0:
-                self.logger.warning(f"✗ No matching metadata found for any games in {platform_name}")
-                if games_skipped > 0:
-                    self.logger.info(f"  {games_skipped} game(s) had no matching metadata in XML")
-                    if self.verbose and games_skipped <= 10:
-                        sample_games = [g['name'] for g in games[:5]]
-                        sample_xml = list(platform_metadata.keys())[:5]
-                        self.logger.info(f"  Sample exported games: {', '.join(sample_games)}")
-                        self.logger.info(f"  Sample XML games: {', '.join(sample_xml)}")
-                return False
+            # Always write the gamelist, even if no metadata
+            total_games = games_with_metadata + games_basic_only
+            # Always write the gamelist, even if no metadata
+            total_games = games_with_metadata + games_basic_only
             
             # Write XML file with pretty formatting
             xml_string = ET.tostring(root, encoding='unicode')
@@ -1958,9 +2224,11 @@ class ArchiveExporter:
                 f.write(pretty_xml)
             
             self.logger.info(f"✓ Created gamelist.xml: {gamelist_file}")
-            self.logger.info(f"  Included {games_added} game(s) with metadata")
-            if games_skipped > 0:
-                self.logger.info(f"  Skipped {games_skipped} game(s) without matching metadata")
+            self.logger.info(f"  Total games: {total_games}")
+            if games_with_metadata > 0:
+                self.logger.info(f"  With metadata: {games_with_metadata}")
+            if games_basic_only > 0:
+                self.logger.info(f"  Basic entries (path/name only): {games_basic_only}")
             return True
             
         except Exception as e:
@@ -2455,10 +2723,14 @@ Examples:
                     if count > 0 and mtype != 'total':
                         print(f"  {mtype}: {count} files")
             
-            # Export gamelist.xml if XML metadata was provided
-            if args.infoxml and stats['games_for_metadata']:
-                print(f"\n→ Generating gamelist.xml for {platform}...")
-                exporter.export_gamelist_xml(platform, stats['games_for_metadata'])
+            # Export gamelist.xml if format supports it
+            # Will create basic gamelist (path/name) even without XML metadata
+            # If --infoxml was provided, will include additional metadata fields
+            if stats['games_for_metadata']:
+                gamelist_path = exporter.format_config.get('gamelist_path')
+                if gamelist_path:
+                    print(f"\n→ Generating gamelist.xml for {platform}...")
+                    exporter.export_gamelist_xml(platform, stats['games_for_metadata'])
         
         # Generate and print report
         if all_platform_stats:
@@ -2474,7 +2746,9 @@ Examples:
                 print(f"  - {platform}")
             print("\nTo add support for these platforms:")
             print(f"  1. Edit fe_formats.json and add mappings in 'platform_mappings'")
-            print(f"  2. Or run without --dry-run to interactively add as custom systems")
+            if exporter.dest_format in ['es-de', 'retroarch']:
+                system_type = "custom systems" if exporter.dest_format == 'es-de' else "playlists"
+                print(f"  2. Or run without --dry-run to interactively add as {system_type}")
             print("!" * 70)
         
         if args.dry_run:

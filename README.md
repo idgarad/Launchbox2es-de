@@ -13,9 +13,9 @@ This project was developed through an AI-human collaboration, combining domain e
 
 ## Features
 
-- **Multiple Frontend Support**: Configurable formats via JSON (currently ES-DE)
+- **Multiple Frontend Support**: Configurable formats via JSON (ES-DE, RetroArch)
 - **Platform Mapping**: Automatic translation from Master Archive names to frontend-specific directory names
-- **Custom System Support**: Automatically prompt to add unmapped platforms to ES-DE custom systems
+- **Custom System Support**: Automatically prompt to add unmapped platforms to ES-DE custom systems or RetroArch playlists
 - **Interactive Mode**: Step through platforms and games with y/n/a/q options
 - **Fuzzy Matching**: Find platforms and games by partial name
 - **Symlink or Copy**: Choose to create symlinks (saves space) or copy files (portable)
@@ -25,6 +25,7 @@ This project was developed through an AI-human collaboration, combining domain e
 - **Verbose Logging**: Detailed task-by-task logging with full paths and operation status for troubleshooting
 - **Format Defaults**: Each frontend has its own default installation path
 - **Path Validation**: Automatically validates and creates required directories with detailed error messages
+- **RetroArch Playlist Generation**: Automatically creates and populates .lpl playlist files for unknown platforms
 
 ## Requirements
 
@@ -588,6 +589,95 @@ The script will automatically:
 - First run: Prompts you to create the custom system
 - Subsequent runs: Automatically detects the existing custom system and uses it
 - Output: `ℹ Using existing custom system for 'Platform Name': systemname`
+
+## RetroArch Playlist Support
+
+When exporting to RetroArch format (`--format retroarch`), the tool automatically creates and manages RetroArch playlist (.lpl) files.
+
+### Automatic Playlist Creation
+
+For unmapped platforms, the tool will prompt you to create a custom playlist:
+
+1. **Interactive Prompt:**
+   ```
+   ======================================================================
+   UNMAPPED PLATFORM: Sega Dreamcast VMU
+   ======================================================================
+   This platform is not mapped in the RetroArch configuration.
+   You can add it as a custom playlist.
+   
+   Create RetroArch playlist? (y/n): y
+   
+   Enter playlist information (press Enter for default):
+   Playlist name [Sega_Dreamcast_VMU]: 
+   Display name [Sega Dreamcast VMU]: 
+   
+   RetroArch core (leave empty if unknown):
+     Common cores: mame_libretro, nestopia_libretro, snes9x_libretro, etc.
+   Core name: vemulator_libretro
+   ```
+
+2. **Playlist Creation:**
+   ```
+   ======================================================================
+   RETROARCH PLAYLIST TO BE CREATED:
+   ======================================================================
+   File: /home/user/.config/retroarch/playlists/Sega_Dreamcast_VMU.lpl
+   Display Name: Sega Dreamcast VMU
+   Default Core: vemulator_libretro
+   ======================================================================
+   
+   ✓ Successfully created playlist 'Sega Dreamcast VMU'
+     Playlist file: /home/user/.config/retroarch/playlists/Sega_Dreamcast_VMU.lpl
+     Games will be added to this playlist during export
+   ```
+
+### Automatic Game Addition to Playlists
+
+When games are exported to RetroArch, they are automatically:
+- Added to the corresponding platform playlist
+- Configured with the default core (or DETECT if unspecified)
+- Given proper paths and labels
+
+### RetroArch Playlist Format
+
+The tool creates standard RetroArch v1.5 playlists with the following structure:
+```json
+{
+  "version": "1.5",
+  "default_core_path": "",
+  "default_core_name": "DETECT",
+  "label_display_mode": 0,
+  "right_thumbnail_mode": 0,
+  "left_thumbnail_mode": 0,
+  "sort_mode": 0,
+  "items": [
+    {
+      "path": "/full/path/to/game.rom",
+      "label": "Game Name",
+      "core_path": "DETECT",
+      "core_name": "DETECT",
+      "crc32": "00000000|crc",
+      "db_name": "Platform_Name.lpl"
+    }
+  ]
+}
+```
+
+### Existing Playlist Detection
+
+The tool automatically detects existing playlists from previous runs:
+- Checks `~/.config/retroarch/playlists/` for matching .lpl files
+- Adds games to existing playlists without duplication
+- Output: `ℹ Using existing RetroArch playlist for 'Platform Name': Platform_Name`
+
+### RetroArch Configuration in fe_formats.json
+
+RetroArch support includes:
+- **Playlists Path**: `~/.config/retroarch/playlists` (stored in `custom_systems_path`)
+- **ROMs Path**: `downloads` (RetroArch's default ROM location)
+- **Metadata Mappings**: Box art, screenshots, and title screens
+- **Platform Mappings**: Using RetroArch's standard naming convention (e.g., "Nintendo - Nintendo Entertainment System")
 
 ### Adding Platform Mappings Manually
 
