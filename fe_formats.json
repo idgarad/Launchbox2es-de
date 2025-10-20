@@ -21,8 +21,8 @@
         "Images/Arcade - Marquee": "images/marquee",
         "Images/Cart - Front": "images/cover",
         "Images/Clear Logo": "images/wheel",
-        "Videos": "/video",
-        "Manuals": "/manual",
+        "Videos": "video",
+        "Manuals": "manual",
         "Music": null
       },
       "platform_mappings": {
