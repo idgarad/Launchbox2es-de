@@ -1771,6 +1771,50 @@ class ArchiveExporter:
         
         return stats
     
+    def _calculate_file_crc32(self, file_path: Path) -> str:
+        """
+        Calculate CRC32 checksum of a file
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            CRC32 checksum as hex string
+        """
+        import zlib
+        
+        crc = 0
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(65536)  # Read in 64KB chunks
+                if not chunk:
+                    break
+                crc = zlib.crc32(chunk, crc)
+        
+        return format(crc & 0xFFFFFFFF, '08x')
+    
+    def _find_next_available_filename(self, base_path: Path, base_name: str, extension: str) -> Path:
+        """
+        Find next available filename with incrementing suffix (_0001, _0002, etc.)
+        
+        Args:
+            base_path: Directory where file will be placed
+            base_name: Base filename without extension
+            extension: File extension (including dot)
+            
+        Returns:
+            Path with available filename
+        """
+        counter = 1
+        while True:
+            filename = f"{base_name}_{counter:04d}{extension}"
+            file_path = base_path / filename
+            if not file_path.exists():
+                return file_path
+            counter += 1
+            if counter > 9999:  # Safety limit
+                raise ValueError(f"Too many duplicate files for {base_name}")
+    
     def backport_metadata(self, platform_name: str, games: List[Dict]) -> Dict[str, int]:
         """
         Copy metadata from destination back to master archive if it's missing in the archive
@@ -1787,6 +1831,8 @@ class ArchiveExporter:
             'videos': 0,
             'manuals': 0,
             'music': 0,
+            'duplicates_skipped': 0,
+            'renamed': 0,
             'total': 0
         }
         
@@ -1805,6 +1851,8 @@ class ArchiveExporter:
         self.logger.info(f"\n→ Checking for metadata to backport from {self.dest_format} to master archive...")
         
         backported_files = []
+        duplicate_files = []
+        renamed_files = []
         
         for game in games:
             game_name = game['name']
@@ -1872,38 +1920,79 @@ class ArchiveExporter:
                 if not dest_files:
                     continue
                 
-                # Check if archive already has this metadata
-                archive_has_metadata = False
-                if archive_metadata_dir.exists():
-                    for archive_file in archive_metadata_dir.rglob('*'):
-                        if archive_file.is_file() and archive_file.stem.startswith(game_name):
-                            archive_has_metadata = True
-                            break
-                
-                if archive_has_metadata:
-                    # Archive already has this metadata, skip
-                    continue
-                
                 # Backport the metadata file(s)
                 for dest_file in dest_files:
+                    # Calculate CRC of destination file
+                    if not self.dry_run:
+                        dest_crc = self._calculate_file_crc32(dest_file)
+                    else:
+                        dest_crc = "00000000"  # Placeholder for dry-run
+                    
                     # Create archive directory if needed
                     if not self.dry_run:
                         archive_metadata_dir.mkdir(parents=True, exist_ok=True)
                     
                     # Determine archive filename (use game name + original extension)
-                    archive_filename = f"{game_name}{dest_file.suffix}"
-                    archive_dest = archive_metadata_dir / archive_filename
+                    base_archive_filename = f"{game_name}{dest_file.suffix}"
+                    archive_dest = archive_metadata_dir / base_archive_filename
+                    
+                    # Check for existing files with same CRC
+                    duplicate_found = False
+                    file_exists = archive_dest.exists()
+                    
+                    if file_exists or (archive_metadata_dir.exists() and not self.dry_run):
+                        # Check all existing files in the archive directory for this game
+                        if archive_metadata_dir.exists():
+                            for existing_file in archive_metadata_dir.iterdir():
+                                if not existing_file.is_file():
+                                    continue
+                                
+                                # Check if filename starts with game name and has same extension
+                                if existing_file.stem.startswith(game_name) and existing_file.suffix == dest_file.suffix:
+                                    if not self.dry_run:
+                                        existing_crc = self._calculate_file_crc32(existing_file)
+                                        
+                                        if existing_crc == dest_crc:
+                                            # File with same CRC already exists - skip
+                                            duplicate_found = True
+                                            duplicate_files.append(dest_file.name)
+                                            stats['duplicates_skipped'] += 1
+                                            if self.verbose:
+                                                self.logger.info(f"  ⊘ Duplicate (CRC match): {dest_file.name} = {existing_file.name}")
+                                            break
+                    
+                    if duplicate_found:
+                        continue
+                    
+                    # If file exists with different CRC, find next available filename
+                    if file_exists and not self.dry_run:
+                        # File exists but CRC is different - need to rename
+                        archive_dest = self._find_next_available_filename(
+                            archive_metadata_dir,
+                            game_name,
+                            dest_file.suffix
+                        )
+                        renamed_files.append(archive_dest.name)
+                        stats['renamed'] += 1
+                        if self.verbose:
+                            self.logger.info(f"  ℹ Renamed to avoid collision: {archive_dest.name}")
                     
                     # Copy file to archive
                     if self.dry_run:
-                        self.logger.info(f"  [DRY-RUN] Would backport: {dest_file.name} → {archive_dest}")
-                        backported_files.append(archive_filename)
+                        if file_exists:
+                            self.logger.info(f"  [DRY-RUN] Would backport (renamed): {dest_file.name} → {archive_dest.name}")
+                        else:
+                            self.logger.info(f"  [DRY-RUN] Would backport: {dest_file.name} → {archive_dest.name}")
+                        backported_files.append(archive_dest.name)
                     else:
                         try:
                             import shutil
                             shutil.copy2(dest_file, archive_dest)
-                            self.logger.info(f"  ✓ Backported: {archive_filename}")
-                            backported_files.append(archive_filename)
+                            if archive_dest.name != base_archive_filename:
+                                self.logger.info(f"  ✓ Backported (renamed): {archive_dest.name}")
+                            else:
+                                self.logger.info(f"  ✓ Backported: {archive_dest.name}")
+                            backported_files.append(archive_dest.name)
                             stats[metadata_type.lower()] += 1
                             stats['total'] += 1
                         except Exception as e:
@@ -1911,8 +2000,15 @@ class ArchiveExporter:
         
         if backported_files:
             self.logger.info(f"\n✓ Backported {len(backported_files)} metadata file(s) to master archive")
+            if renamed_files:
+                self.logger.info(f"  ℹ {len(renamed_files)} file(s) renamed to prevent collisions")
+            if duplicate_files:
+                self.logger.info(f"  ⊘ {len(duplicate_files)} duplicate(s) skipped (same CRC)")
         else:
-            self.logger.info(f"  No new metadata found to backport")
+            if duplicate_files:
+                self.logger.info(f"  ⊘ All files already exist (skipped {len(duplicate_files)} duplicate(s))")
+            else:
+                self.logger.info(f"  No new metadata found to backport")
         
         return stats
     

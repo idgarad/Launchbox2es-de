@@ -615,24 +615,73 @@ For each game, the tool:
 ### Safety Features
 
 - **No Overwriting**: Never overwrites existing metadata in archive
+- **CRC32 Checking**: Compares file checksums to detect true duplicates
+- **Smart Collision Avoidance**: Files with different content get unique names (_0001, _0002, etc.)
+- **Duplicate Detection**: Skips files that already exist with same CRC
 - **Copy Only**: Uses `shutil.copy2` to preserve file timestamps
 - **Dry-Run Support**: Preview what would be backported with `--dry-run`
 - **Per-Game Checking**: Only backports for games that were actually exported
 - **Directory Creation**: Automatically creates archive subdirectories as needed
+- **Multi-Source Support**: Preserves metadata from different scraping sources
+
+### Collision Handling
+
+When backporting, the tool handles file collisions intelligently:
+
+1. **Calculate CRC32** of the file to be backported
+2. **Check existing files** in archive with same game name and extension
+3. **Compare CRCs**:
+   - **Same CRC** → Skip (duplicate, already have this file)
+   - **Different CRC** → Rename with `_0001`, `_0002`, etc. suffix
+4. **Preserve all unique files** from different scraping sources
+
+**Example**:
+```
+Archive already has:
+  Super Mario Bros.png (CRC: a1b2c3d4)
+
+Backporting from ES-DE:
+  Super Mario Bros.png (CRC: a1b2c3d4) → Skip (duplicate)
+
+Backporting from RetroArch:
+  Super Mario Bros.png (CRC: e5f6g7h8) → Save as Super Mario Bros_0001.png (different content)
+```
+
+This ensures you never lose metadata from different sources!
 
 ### Example Output
 
+**With backported files**:
 ```
 → Checking for metadata to backport from es-de to master archive...
   ✓ Backported: Super Mario Bros.png
   ✓ Backported: Super Mario Bros.mp4
-  ✓ Backported: Legend of Zelda.png
+  ⊘ Duplicate (CRC match): Legend of Zelda.png = Legend of Zelda.png
+  ✓ Backported (renamed): Metroid_0001.png
+  ℹ Renamed to avoid collision: Metroid_0001.png
   
 ✓ Backported 3 metadata file(s) to master archive
+  ℹ 1 file(s) renamed to prevent collisions
+  ⊘ 1 duplicate(s) skipped (same CRC)
 
 Metadata backported to master archive:
   images: 2 files
   videos: 1 files
+```
+
+**All duplicates (no new files)**:
+```
+→ Checking for metadata to backport from es-de to master archive...
+  ⊘ Duplicate (CRC match): Super Mario Bros.png = Super Mario Bros.png
+  ⊘ Duplicate (CRC match): Super Mario Bros.mp4 = Super Mario Bros.mp4
+  
+  ⊘ All files already exist (skipped 2 duplicate(s))
+```
+
+**No metadata found**:
+```
+→ Checking for metadata to backport from es-de to master archive...
+  No new metadata found to backport
 ```
 
 ### Workflow Example
@@ -696,13 +745,46 @@ Metadata backported to master archive:
 - 🔄 **Perfect for refreshes** - after scraping sessions
 - 💾 **Safe** - doesn't touch existing game files
 
+### Multi-Source Metadata Collection
+
+The CRC checking feature allows you to collect metadata from **multiple scraping sources** without losing any files:
+
+**Scenario**: Scraping the same game from different sources
+
+1. **Scrape in ES-DE** (ScreenScraper):
+   ```bash
+   # Scrape NES games in ES-DE using ScreenScraper
+   python init.py --platform "nes" --backport-only
+   # Archives: Super Mario Bros.png (European box art)
+   ```
+
+2. **Scrape in RetroArch** (TheGamesDB):
+   ```bash
+   # Export to RetroArch and scrape using TheGamesDB
+   python init.py --format retroarch --platform "nes" --games ALL
+   # Scrape in RetroArch...
+   python init.py --format retroarch --platform "nes" --backport-only
+   # Archives: Super Mario Bros_0001.png (North American box art)
+   ```
+
+3. **Result**: Both images preserved in archive!
+   ```
+   Archive/Metadata/Images/Box - Front/nes/
+     Super Mario Bros.png       (European box art from ES-DE)
+     Super Mario Bros_0001.png  (North American box art from RetroArch)
+   ```
+
+This lets you build a **comprehensive metadata collection** by aggregating from multiple sources!
+
 ### Notes
 
 - **Metadata Mappings Required**: Only works with configured `metadata_mappings` in fe_formats.json
 - **Path Structure**: Backported files use archive's directory structure
 - **Filename Matching**: Uses game name matching (not ROM filename matching)
-- **Manual Cleanup**: You may want to organize/rename backported files in archive afterwards
+- **CRC-based Deduplication**: Identical files are skipped, different files are preserved
+- **Incremental Numbering**: Collisions use `_0001`, `_0002`, etc. suffix
 - **Backport-Only Scans Destination**: Reads game list from destination directory, not archive
+- **Source Agnostic**: Collect from ES-DE, RetroArch, or any configured frontend
 
 ## Platform Mapping
 
