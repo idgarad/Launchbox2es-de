@@ -642,7 +642,8 @@ class ArchiveExporter:
                 playlist_data = json.load(f)
             
             # Check if game already exists in playlist
-            rom_path_str = str(rom_path.resolve())
+            # Use the symlink/copied path, not the resolved original path
+            rom_path_str = str(rom_path.absolute())
             for item in playlist_data.get('items', []):
                 if item.get('path') == rom_path_str:
                     # Game already in playlist
